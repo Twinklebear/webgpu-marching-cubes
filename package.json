@@ -28,6 +28,9 @@
     "webpack-dev-server": "^4.2.1"
   },
   "dependencies": {
-    "@webgpu/types": "^0.1.30"
+    "@webgpu/types": "^0.1.30",
+    "arcball_camera": "^1.0.1",
+    "ez_canvas_controller": "^1.0.0",
+    "gl-matrix": "^3.4.1"
   }
 }

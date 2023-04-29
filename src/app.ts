@@ -1,5 +1,9 @@
-// We use webpack to package our shaders as string resources that we can import
-import shaderCode from "./triangle.wgsl";
+import {ArcballCamera} from "arcball_camera";
+import {Controller} from "ez_canvas_controller";
+import {mat4, vec3} from "gl-matrix";
+
+import shaderCode from "./shaders.wgsl";
+import {fillSelector, volumes} from "./volume";
 
 (async () => {
     if (navigator.gpu === undefined) {
@@ -15,6 +19,9 @@ import shaderCode from "./triangle.wgsl";
     // Get a context to display our rendered image on the canvas
     let canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
     let context = canvas.getContext("webgpu");
+
+    let volumePicker = document.getElementById("volumeList") as HTMLSelectElement;
+    fillSelector(volumePicker, volumes);
 
     // Setup shader modules
     let shaderModule = device.createShaderModule({code: shaderCode});
@@ -84,8 +91,12 @@ import shaderCode from "./triangle.wgsl";
         targets: [{format: swapChainFormat}]
     };
 
+    let bindGroupLayout = device.createBindGroupLayout({
+        entries: [{binding: 0, visibility: GPUShaderStage.VERTEX, buffer: {type: "uniform"}}]
+    });
+
     // Create render pipeline
-    let layout = device.createPipelineLayout({bindGroupLayouts: []});
+    let layout = device.createPipelineLayout({bindGroupLayouts: [bindGroupLayout]});
 
     let renderPipeline = device.createRenderPipeline({
         layout: layout,
@@ -112,6 +123,51 @@ import shaderCode from "./triangle.wgsl";
         }
     };
 
+    let viewParamsBuffer = device.createBuffer({
+        size: 4 * 4 * 4,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: false,
+    });
+
+    let uploadBuffer = device.createBuffer({
+        size: viewParamsBuffer.size,
+        usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC,
+        mappedAtCreation: false,
+    });
+
+    let bindGroup = device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [{binding: 0, resource: {buffer: viewParamsBuffer}}]
+    });
+
+    // Setup camera and camera controls
+    const defaultEye = vec3.set(vec3.create(), 0.0, 0.0, 2.5);
+    const center = vec3.set(vec3.create(), 0.0, 0.0, 0.5);
+    const up = vec3.set(vec3.create(), 0.0, 1.0, 0.0);
+    let camera = new ArcballCamera(defaultEye, center, up, 2, [canvas.width, canvas.height]);
+    let proj = mat4.perspective(
+        mat4.create(), 50 * Math.PI / 180.0, canvas.width / canvas.height, 0.1, 100);
+    let projView = mat4.create();
+
+    // Register mouse and touch listeners
+    var controller = new Controller();
+    controller.mousemove = function (prev: Array<number>, cur: Array<number>, evt: MouseEvent) {
+        if (evt.buttons == 1) {
+            camera.rotate(prev, cur);
+
+        } else if (evt.buttons == 2) {
+            camera.pan([cur[0] - prev[0], prev[1] - cur[1]]);
+        }
+    };
+    controller.wheel = function (amt: number) {
+        camera.zoom(amt);
+    };
+    controller.pinch = controller.wheel;
+    controller.twoFingerDrag = function (drag: number) {
+        camera.pan(drag);
+    };
+    controller.registerForCanvas(canvas);
+
     let animationFrame = function () {
         let resolve = null;
         let promise = new Promise(r => resolve = r);
@@ -123,13 +179,27 @@ import shaderCode from "./triangle.wgsl";
     // Render!
     while (true) {
         await animationFrame();
+        if (document.hidden) {
+            continue;
+        }
+
+        projView = mat4.mul(projView, proj, camera.camera);
+        {
+            await uploadBuffer.mapAsync(GPUMapMode.WRITE);
+            new Float32Array(uploadBuffer.getMappedRange()).set(projView);
+            uploadBuffer.unmap();
+        }
 
         renderPassDesc.colorAttachments[0].view = context.getCurrentTexture().createView();
 
         let commandEncoder = device.createCommandEncoder();
 
+        commandEncoder.copyBufferToBuffer(
+            uploadBuffer, 0, viewParamsBuffer, 0, viewParamsBuffer.size);
+
         let renderPass = commandEncoder.beginRenderPass(renderPassDesc);
 
+        renderPass.setBindGroup(0, bindGroup);
         renderPass.setPipeline(renderPipeline);
         renderPass.setVertexBuffer(0, dataBuf);
         renderPass.draw(3, 1, 0, 0);
