@@ -2,7 +2,7 @@ import {ArcballCamera} from "arcball_camera";
 import {Controller} from "ez_canvas_controller";
 import {mat4, vec3} from "gl-matrix";
 
-import shaderCode from "./shaders.wgsl";
+import renderMeshShaders from "./render_mesh.wgsl";
 import {fillSelector, volumes} from "./volume";
 
 (async () => {
@@ -14,7 +14,16 @@ import {fillSelector, volumes} from "./volume";
 
     // Get a GPU device to render with
     let adapter = await navigator.gpu.requestAdapter();
-    let device = await adapter.requestDevice();
+    console.log(adapter.limits);
+    let requestedLimits = {
+        requiredLimits: {
+            maxStorageBuffersPerShaderStage: adapter.limits.maxStorageBuffersPerShaderStage,
+            maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+            maxBufferSize: adapter.limits.maxBufferSize
+        },
+    };
+
+    let device = await adapter.requestDevice(requestedLimits);
 
     // Get a context to display our rendered image on the canvas
     let canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
@@ -24,7 +33,7 @@ import {fillSelector, volumes} from "./volume";
     fillSelector(volumePicker, volumes);
 
     // Setup shader modules
-    let shaderModule = device.createShaderModule({code: shaderCode});
+    let shaderModule = device.createShaderModule({code: renderMeshShaders});
     let compilationInfo = await shaderModule.getCompilationInfo();
     if (compilationInfo.messages.length > 0) {
         let hadError = false;
