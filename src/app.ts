@@ -3,7 +3,8 @@ import {Controller} from "ez_canvas_controller";
 import {mat4, vec3} from "gl-matrix";
 
 import renderMeshShaders from "./render_mesh.wgsl";
-import {fillSelector, volumes} from "./volume";
+import {fillSelector, volumes, compileShader} from "./volume";
+import {ExclusiveScan} from "./exclusive_scan";
 
 (async () => {
     if (navigator.gpu === undefined) {
@@ -33,21 +34,9 @@ import {fillSelector, volumes} from "./volume";
     fillSelector(volumePicker, volumes);
 
     // Setup shader modules
-    let shaderModule = device.createShaderModule({code: renderMeshShaders});
-    let compilationInfo = await shaderModule.getCompilationInfo();
-    if (compilationInfo.messages.length > 0) {
-        let hadError = false;
-        console.log("Shader compilation log:");
-        for (let i = 0; i < compilationInfo.messages.length; ++i) {
-            let msg = compilationInfo.messages[i];
-            console.log(`${msg.lineNum}:${msg.linePos} - ${msg.message}`);
-            hadError = hadError || msg.type == "error";
-        }
-        if (hadError) {
-            console.log("Shader failed to compile");
-            return;
-        }
-    }
+    let shaderModule = await compileShader(device, renderMeshShaders, "renderMeshShaders");
+
+    let scanner = ExclusiveScan.create(device);
 
     // Specify vertex data
     // Allocate room for the vertex data: 3 vertices, each with 2 float4's
