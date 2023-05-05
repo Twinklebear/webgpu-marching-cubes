@@ -4,7 +4,17 @@ import addBlockSums from "./exclusive_scan_add_block_sums.wgsl";
 import prefixSum from "./exclusive_scan_prefix_sum.wgsl";
 import prefixSumBlocks from "./exclusive_scan_prefix_sum_blocks.wgsl";
 
-const SCAN_BLOCK_SIZE = 512;
+// Note: This also means the min size we can scan is 128 elements
+const SCAN_BLOCK_SIZE = 128;
+
+// Serial scan for validation
+export function serialExclusiveScan(array: Uint32Array, output: Uint32Array) {
+    output[0] = 0;
+    for (var i = 1; i < array.length; ++i) {
+        output[i] = array[i - 1] + output[i - 1];
+    }
+    return output[array.length - 1] + array[array.length - 1];
+}
 
 export class ExclusiveScan {
     #device: GPUDevice;
@@ -102,14 +112,12 @@ export class ExclusiveScan {
     }
 
     async scan(buffer: GPUBuffer, size: number) {
-        const bufferTotalSize = buffer.size;
-        // TODO: merge the prep gpu input and scan to make a lot of the buffers
-        // into just small temporaries
-        if (bufferTotalSize != this.getAlignedSize(size)) {
-            throw Error("Error: GPU input buffer size must be aligned to ExclusiveScan::getAlignedSize")
+        const bufferTotalSize = buffer.size / 4;
+        if (bufferTotalSize != this.getAlignedSize(bufferTotalSize)) {
+            throw Error(`Error: GPU input buffer size (${bufferTotalSize}) must be aligned to ExclusiveScan::getAlignedSize, expected ${this.getAlignedSize(bufferTotalSize)}`)
         }
 
-        let readbackBuffer = this.#device.createBuffer({
+        let readbackBuf = this.#device.createBuffer({
             size: 4,
             usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
         });
@@ -121,9 +129,12 @@ export class ExclusiveScan {
         });
 
         // TODO: run a clear on carry in/out buffer
-        // TODO: Also jsut use the readbackBuffer as the extra copy space to avoid aliasing
         let carryBuf = this.#device.createBuffer({
             size: 8,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+        })
+        let carryIntermediateBuf = this.#device.createBuffer({
+            size: 4,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
         })
 
@@ -155,194 +166,102 @@ export class ExclusiveScan {
         if (size < bufferTotalSize) {
             // TODO: Later the scan should support not reading these values by doing proper
             // range checking so that we don't have to touch regions of the buffer you don't tell us to
-            commandEncoder.clearBuffer(buffer, size * 4, (bufferTotalSize - size) * 4);
+            commandEncoder.clearBuffer(buffer, size * 4, 4);
         }
 
         // Record the scan commands
         for (var i = 0; i < numChunks; ++i) {
+            let nWorkGroups =
+                Math.min((bufferTotalSize - i * this.#maxScanSize) / SCAN_BLOCK_SIZE, SCAN_BLOCK_SIZE);
 
+            // TODO: Switch back to using dynamic offsets since they're enabled again
+            let scanBlocksBG = null;
+            if (nWorkGroups == SCAN_BLOCK_SIZE) {
+                scanBlocksBG = this.#device.createBindGroup({
+                    layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
+                    entries: [
+                        {
+                            binding: 0,
+                            resource: {
+                                buffer: buffer,
+                                size: Math.min(this.#maxScanSize, bufferTotalSize) * 4,
+                                offset: i * this.#maxScanSize * 4
+                            }
+                        },
+                        {
+                            binding: 1,
+                            resource: {
+                                buffer: blockSumBuf,
+                            },
+                        },
+                    ],
+                });
+            } else {
+                // Bind groups for processing the remainder if the aligned size isn't
+                // an even multiple of the max scan size
+                scanBlocksBG = this.#device.createBindGroup({
+                    layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
+                    entries: [
+                        {
+                            binding: 0,
+                            resource: {
+                                buffer: buffer,
+                                size: (bufferTotalSize % this.#maxScanSize) * 4,
+                                offset: i * this.#maxScanSize * 4
+                            }
+                        },
+                        {
+                            binding: 1,
+                            resource: {
+                                buffer: blockSumBuf
+                            },
+                        },
+                    ],
+                });
+            }
+
+            // Clear the previous block sums
+            commandEncoder.clearBuffer(blockSumBuf);
+
+            var computePass = commandEncoder.beginComputePass();
+
+            computePass.setPipeline(this.#scanBlocksPipeline);
+            computePass.setBindGroup(0, scanBlocksBG);
+            computePass.dispatchWorkgroups(nWorkGroups, 1, 1);
+
+            computePass.setPipeline(this.#scanBlockResultsPipeline);
+            computePass.setBindGroup(0, scanBlockResultsBG);
+            computePass.dispatchWorkgroups(1, 1, 1);
+
+            computePass.setPipeline(this.#addBlockSumsPipeline);
+            computePass.setBindGroup(0, scanBlocksBG);
+            computePass.dispatchWorkgroups(nWorkGroups, 1, 1);
+
+            computePass.end();
+
+            // Update the carry in value for the next chunk, copy carry out to carry in
+            commandEncoder.copyBufferToBuffer(carryBuf, 4, carryIntermediateBuf, 0, 4);
+            commandEncoder.copyBufferToBuffer(carryIntermediateBuf, 0, carryBuf, 0, 4);
         }
-    }
-};
 
-/*
-
-var ExclusiveScanner = function (scanPipeline, gpuBuffer, alignedSize) {
-    this.scanPipeline = scanPipeline;
-    this.inputSize = alignedSize;
-    this.inputBuf = gpuBuffer;
-
-    // TODO: Make this a temporary
-    this.readbackBuf = scanPipeline.device.createBuffer({
-        size: 4,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
-
-    // TODO: Make this a temporary
-    // Block sum buffer
-    var blockSumBuf = scanPipeline.device.createBuffer({
-        size: ScanBlockSize * 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-    });
-    new Uint32Array(blockSumBuf.getMappedRange()).fill(0);
-    blockSumBuf.unmap();
-    this.blockSumBuf = blockSumBuf;
-
-    // TODO: Make this a temporary
-    var carryBuf = scanPipeline.device.createBuffer({
-        size: 8,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-    });
-    new Uint32Array(carryBuf.getMappedRange()).fill(0);
-    carryBuf.unmap();
-    this.carryBuf = carryBuf;
-
-    // TODO: Make this a temporary
-    // Can't copy from a buffer to itself so we need an intermediate to move the carry
-    this.carryIntermediateBuf = scanPipeline.device.createBuffer({
-        size: 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-    });
-
-    // TODO: Make this a temporary
-    this.scanBlockResultsBindGroup = scanPipeline.device.createBindGroup({
-        layout: this.scanPipeline.scanBlockResultsLayout,
-        entries: [
-            {
-                binding: 0,
-                resource: {
-                    buffer: blockSumBuf,
-                },
-            },
-            {
-                binding: 1,
-                resource: {
-                    buffer: carryBuf,
-                },
-            },
-        ],
-    });
-};
-
-ExclusiveScanner.prototype.scan = async function (dataSize) {
-    // If the data size we're scanning within the larger input array has changed,
-    // we just need to re-record the scan commands
-    var numChunks = Math.ceil(dataSize / this.scanPipeline.maxScanSize);
-    this.offsets = new Uint32Array(numChunks);
-    for (var i = 0; i < numChunks; ++i) {
-        this.offsets.set([i * this.scanPipeline.maxScanSize * 4], i);
-    }
-
-    // Scan through the data in chunks, updating carry in/out at the end to carry
-    // over the results of the previous chunks
-    var commandEncoder = this.scanPipeline.device.createCommandEncoder();
-
-    // Clear the carry buffer and the readback sum entry if it's not scan size aligned
-    commandEncoder.copyBufferToBuffer(this.scanPipeline.clearBuf, 0, this.carryBuf, 0, 8);
-    for (var i = 0; i < numChunks; ++i) {
-        var nWorkGroups =
-            Math.min((this.inputSize - i * this.scanPipeline.maxScanSize) / ScanBlockSize,
-                ScanBlockSize);
-
-        var scanBlockBG = null;
-        if (nWorkGroups === ScanBlockSize) {
-            scanBlockBG = this.scanPipeline.device.createBindGroup({
-                layout: this.scanPipeline.scanBlocksLayout,
-                entries: [
-                    {
-                        binding: 0,
-                        resource: {
-                            buffer: this.inputBuf,
-                            size: Math.min(this.scanPipeline.maxScanSize, this.inputSize) * 4,
-                            offset: this.offsets[i],
-                        },
-                    },
-                    {
-                        binding: 1,
-                        resource: {
-                            buffer: this.blockSumBuf,
-                        },
-                    },
-                ],
-            });
+        // Copy the final scan result back to the readback buffer
+        if (size < bufferTotalSize) {
+            console.log(`Copying sum from ${size} in the input buffer`);
+            commandEncoder.copyBufferToBuffer(buffer, size * 4, readbackBuf, 0, 4);
         } else {
-            // Bind groups for processing the remainder if the aligned size isn't
-            // an even multiple of the max scan size
-            scanBlockBG = this.scanPipeline.device.createBindGroup({
-                layout: this.scanPipeline.scanBlocksLayout,
-                entries: [
-                    {
-                        binding: 0,
-                        resource: {
-                            buffer: this.inputBuf,
-                            size: (this.inputSize % this.scanPipeline.maxScanSize) * 4,
-                            offset: this.offsets[i],
-                        },
-                    },
-                    {
-                        binding: 1,
-                        resource: {
-                            buffer: this.blockSumBuf,
-                        },
-                    },
-                ],
-            });
+            console.log(`Copying sum from the carry out buffer`);
+            commandEncoder.copyBufferToBuffer(carryBuf, 4, readbackBuf, 0, 4);
         }
 
-        // Clear the previous block sums
-        commandEncoder.copyBufferToBuffer(
-            this.scanPipeline.clearBuf, 0, this.blockSumBuf, 0, ScanBlockSize * 4);
+        this.#device.queue.submit([commandEncoder.finish()]);
+        await this.#device.queue.onSubmittedWorkDone();
 
-        var computePass = commandEncoder.beginComputePass();
+        await readbackBuf.mapAsync(GPUMapMode.READ);
+        var mapping = new Uint32Array(readbackBuf.getMappedRange());
+        var sum = mapping[0];
+        readbackBuf.unmap();
 
-        computePass.setPipeline(this.scanPipeline.scanBlocksPipeline);
-        computePass.setBindGroup(0, scanBlockBG);
-        computePass.dispatchWorkgroups(nWorkGroups, 1, 1);
-
-        computePass.setPipeline(this.scanPipeline.scanBlockResultsPipeline);
-        computePass.setBindGroup(0, this.scanBlockResultsBindGroup);
-        computePass.dispatchWorkgroups(1, 1, 1);
-
-        computePass.setPipeline(this.scanPipeline.addBlockSumsPipeline);
-        computePass.setBindGroup(0, scanBlockBG);
-        computePass.dispatchWorkgroups(nWorkGroups, 1, 1);
-
-        computePass.end();
-
-        // Update the carry in value for the next chunk, copy carry out to carry in
-        commandEncoder.copyBufferToBuffer(this.carryBuf, 4, this.carryIntermediateBuf, 0, 4);
-        commandEncoder.copyBufferToBuffer(this.carryIntermediateBuf, 0, this.carryBuf, 0, 4);
+        return sum;
     }
-    var commandBuffer = commandEncoder.finish();
-
-    // We need to clear a different element in the input buf for the last item if the data size
-    // shrinks
-    if (dataSize < this.inputSize) {
-        var commandEncoder = this.scanPipeline.device.createCommandEncoder();
-        commandEncoder.copyBufferToBuffer(
-            this.scanPipeline.clearBuf, 0, this.inputBuf, dataSize * 4, 4);
-        this.scanPipeline.device.queue.submit([commandEncoder.finish()]);
-    }
-
-    this.scanPipeline.device.queue.submit([commandBuffer]);
-
-    // Readback the the last element to return the total sum as well
-    var commandEncoder = this.scanPipeline.device.createCommandEncoder();
-    if (dataSize < this.inputSize) {
-        commandEncoder.copyBufferToBuffer(this.inputBuf, dataSize * 4, this.readbackBuf, 0, 4);
-    } else {
-        commandEncoder.copyBufferToBuffer(this.carryBuf, 4, this.readbackBuf, 0, 4);
-    }
-    this.scanPipeline.device.queue.submit([commandEncoder.finish()]);
-
-    await this.readbackBuf.mapAsync(GPUMapMode.READ);
-    var mapping = new Uint32Array(this.readbackBuf.getMappedRange());
-    var sum = mapping[0];
-    this.readbackBuf.unmap();
-
-    return sum;
 };
 
-*/

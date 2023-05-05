@@ -4,7 +4,7 @@ import {mat4, vec3} from "gl-matrix";
 
 import renderMeshShaders from "./render_mesh.wgsl";
 import {fillSelector, volumes, compileShader} from "./volume";
-import {ExclusiveScan} from "./exclusive_scan";
+import {ExclusiveScan, serialExclusiveScan} from "./exclusive_scan";
 
 (async () => {
     if (navigator.gpu === undefined) {
@@ -36,7 +36,64 @@ import {ExclusiveScan} from "./exclusive_scan";
     // Setup shader modules
     let shaderModule = await compileShader(device, renderMeshShaders, "renderMeshShaders");
 
-    let scanner = ExclusiveScan.create(device);
+    let testPassed = true;
+    for (var testRun = 0; testRun < 10; ++testRun) {
+        //const maxScanTestSize = 134217728;
+        const maxScanTestSize = 65536;
+        let scanSize = Math.floor(Math.min(128 + Math.random() * maxScanTestSize, maxScanTestSize));
+        let testScanInput = new Uint32Array(maxScanTestSize);
+        for (var i = 0; i < scanSize; ++i) {
+            testScanInput[i] = Math.random() * 4096;
+        }
+
+        console.log(`Scan size ${scanSize}`);
+
+        let testScanBuf = device.createBuffer({
+            size: testScanInput.byteLength,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+            mappedAtCreation: true
+        });
+        new Uint32Array(testScanBuf.getMappedRange()).set(testScanInput);
+        testScanBuf.unmap();
+
+        let scanner = await ExclusiveScan.create(device);
+        let gpuSum = await scanner.scan(testScanBuf, scanSize);
+
+        let readbackBuf = device.createBuffer({
+            size: testScanInput.byteLength,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+        var commandEncoder = device.createCommandEncoder();
+        commandEncoder.copyBufferToBuffer(testScanBuf, 0, readbackBuf, 0, readbackBuf.size);
+        device.queue.submit([commandEncoder.finish()]);
+        await device.queue.onSubmittedWorkDone();
+
+        await readbackBuf.mapAsync(GPUMapMode.READ);
+        var gpuResult = new Uint32Array(readbackBuf.getMappedRange());
+
+        let validationOutput = new Uint32Array(testScanInput.length);
+        let cpuSum = serialExclusiveScan(testScanInput, validationOutput);
+
+        console.log(`GPU Sum: ${gpuSum}, CPU Sum: ${cpuSum}`);
+        let validationPassed = gpuSum == cpuSum;
+        for (var i = 0; i < scanSize; ++i) {
+            if (gpuResult[i] != validationOutput[i]) {
+                console.log(`GPU scan result wrong at ${i}, got ${gpuResult[i]}, expected ${validationOutput[i]}`);
+                validationPassed = false;
+            }
+        }
+        console.log(`Scan validation passed: ${validationPassed}`);
+        if (!validationPassed) {
+            testPassed = false;
+        }
+
+        readbackBuf.unmap();
+    }
+    if (!testPassed) {
+        console.log("Scan tests failed!");
+        throw Error("Scan test failed!");
+    }
+
 
     // Specify vertex data
     // Allocate room for the vertex data: 3 vertices, each with 2 float4's
