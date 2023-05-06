@@ -3,7 +3,7 @@ import {alignTo} from "./volume";
 // Generate the work group ID offset buffer and the dynamic offset buffer to use for chunking
 // up a large compute dispatch. The start of the push constants data will be:
 // {
-//      u32: global work group id offset
+//      u32: work group id offset
 //      u32: totalWorkGroups
 //      ...: optional additional data (if any)
 // }

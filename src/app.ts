@@ -5,6 +5,7 @@ import {mat4, vec3} from "gl-matrix";
 import renderMeshShaders from "./render_mesh.wgsl";
 import {fillSelector, volumes, compileShader} from "./volume";
 import {ExclusiveScan, serialExclusiveScan} from "./exclusive_scan";
+import {StreamCompactIDs} from "./stream_compact_ids";
 
 (async () => {
     if (navigator.gpu === undefined) {
@@ -94,6 +95,9 @@ import {ExclusiveScan, serialExclusiveScan} from "./exclusive_scan";
         throw Error("Scan test failed!");
     }
 
+    {
+        let streamCompact = await StreamCompactIDs.create(device);
+    }
 
     // Specify vertex data
     // Allocate room for the vertex data: 3 vertices, each with 2 float4's
