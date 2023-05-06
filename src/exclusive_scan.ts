@@ -19,11 +19,6 @@ export function serialExclusiveScan(array: Uint32Array, output: Uint32Array) {
 export class ExclusiveScan {
     #device: GPUDevice;
 
-    // Note: really should be set/read/generated in the scanner shader code
-    // Here just have it hard-coded
-    // We scan chunks of 512 elements, wgsize = ScanBlockSize / 2
-    readonly #workGroupSize = SCAN_BLOCK_SIZE / 2;
-
     // The max # of elements that can be scanned without carry in/out
     readonly #maxScanSize = SCAN_BLOCK_SIZE * SCAN_BLOCK_SIZE;
 
@@ -45,9 +40,27 @@ export class ExclusiveScan {
     static async create(device: GPUDevice) {
         let self = new ExclusiveScan(device);
 
-        // TODO: maybe use a dynamic offset again? I think I was using that before
-        // they got disabled temporarily
-        let bindGroupLayout = device.createBindGroupLayout({
+        let scanAddBGLayout = device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "storage",
+                        hasDynamicOffset: true
+                    }
+                },
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "storage",
+                    }
+                },
+            ],
+        });
+
+        let scanBlockBGLayout = device.createBindGroupLayout({
             entries: [
                 {
                     binding: 0,
@@ -68,7 +81,7 @@ export class ExclusiveScan {
 
         self.#scanBlocksPipeline = device.createComputePipeline({
             layout: device.createPipelineLayout({
-                bindGroupLayouts: [bindGroupLayout],
+                bindGroupLayouts: [scanAddBGLayout],
             }),
             compute: {
                 module: await compileShader(device, prefixSum, "ExclusiveScan::prefixSum"),
@@ -81,7 +94,7 @@ export class ExclusiveScan {
 
         self.#scanBlockResultsPipeline = device.createComputePipeline({
             layout: device.createPipelineLayout({
-                bindGroupLayouts: [bindGroupLayout],
+                bindGroupLayouts: [scanBlockBGLayout],
             }),
             compute: {
                 module: await compileShader(device, prefixSumBlocks, "ExclusiveScan::prefixSumBlocks"),
@@ -94,7 +107,7 @@ export class ExclusiveScan {
 
         self.#addBlockSumsPipeline = device.createComputePipeline({
             layout: device.createPipelineLayout({
-                bindGroupLayouts: [bindGroupLayout],
+                bindGroupLayouts: [scanAddBGLayout],
             }),
             compute: {
                 module: await compileShader(device, addBlockSums, "ExclusiveScan::addBlockSums"),
@@ -122,13 +135,11 @@ export class ExclusiveScan {
             usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
         });
 
-        // TODO: run a clear on this buffer 
         let blockSumBuf = this.#device.createBuffer({
             size: SCAN_BLOCK_SIZE * 4,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
         });
 
-        // TODO: run a clear on carry in/out buffer
         let carryBuf = this.#device.createBuffer({
             size: 8,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
@@ -156,6 +167,25 @@ export class ExclusiveScan {
             ],
         });
 
+        let scanBlocksBG = this.#device.createBindGroup({
+            layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: buffer,
+                        size: Math.min(this.#maxScanSize, bufferTotalSize) * 4,
+                    }
+                },
+                {
+                    binding: 1,
+                    resource: {
+                        buffer: blockSumBuf,
+                    },
+                },
+            ],
+        });
+
         const numChunks = Math.ceil(size / this.#maxScanSize);
 
         var commandEncoder = this.#device.createCommandEncoder();
@@ -174,59 +204,13 @@ export class ExclusiveScan {
             let nWorkGroups =
                 Math.min((bufferTotalSize - i * this.#maxScanSize) / SCAN_BLOCK_SIZE, SCAN_BLOCK_SIZE);
 
-            // TODO: Switch back to using dynamic offsets since they're enabled again
-            let scanBlocksBG = null;
-            if (nWorkGroups == SCAN_BLOCK_SIZE) {
-                scanBlocksBG = this.#device.createBindGroup({
-                    layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
-                    entries: [
-                        {
-                            binding: 0,
-                            resource: {
-                                buffer: buffer,
-                                size: Math.min(this.#maxScanSize, bufferTotalSize) * 4,
-                                offset: i * this.#maxScanSize * 4
-                            }
-                        },
-                        {
-                            binding: 1,
-                            resource: {
-                                buffer: blockSumBuf,
-                            },
-                        },
-                    ],
-                });
-            } else {
-                // Bind groups for processing the remainder if the aligned size isn't
-                // an even multiple of the max scan size
-                scanBlocksBG = this.#device.createBindGroup({
-                    layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
-                    entries: [
-                        {
-                            binding: 0,
-                            resource: {
-                                buffer: buffer,
-                                size: (bufferTotalSize % this.#maxScanSize) * 4,
-                                offset: i * this.#maxScanSize * 4
-                            }
-                        },
-                        {
-                            binding: 1,
-                            resource: {
-                                buffer: blockSumBuf
-                            },
-                        },
-                    ],
-                });
-            }
-
             // Clear the previous block sums
             commandEncoder.clearBuffer(blockSumBuf);
 
             var computePass = commandEncoder.beginComputePass();
 
             computePass.setPipeline(this.#scanBlocksPipeline);
-            computePass.setBindGroup(0, scanBlocksBG);
+            computePass.setBindGroup(0, scanBlocksBG, [i * this.#maxScanSize * 4]);
             computePass.dispatchWorkgroups(nWorkGroups, 1, 1);
 
             computePass.setPipeline(this.#scanBlockResultsPipeline);
@@ -234,7 +218,7 @@ export class ExclusiveScan {
             computePass.dispatchWorkgroups(1, 1, 1);
 
             computePass.setPipeline(this.#addBlockSumsPipeline);
-            computePass.setBindGroup(0, scanBlocksBG);
+            computePass.setBindGroup(0, scanBlocksBG, [i * this.#maxScanSize * 4]);
             computePass.dispatchWorkgroups(nWorkGroups, 1, 1);
 
             computePass.end();
@@ -246,10 +230,8 @@ export class ExclusiveScan {
 
         // Copy the final scan result back to the readback buffer
         if (size < bufferTotalSize) {
-            console.log(`Copying sum from ${size} in the input buffer`);
             commandEncoder.copyBufferToBuffer(buffer, size * 4, readbackBuf, 0, 4);
         } else {
-            console.log(`Copying sum from the carry out buffer`);
             commandEncoder.copyBufferToBuffer(carryBuf, 4, readbackBuf, 0, 4);
         }
 
