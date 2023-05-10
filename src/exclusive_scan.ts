@@ -10,7 +10,7 @@ const SCAN_BLOCK_SIZE = 128;
 // Serial scan for validation
 export function serialExclusiveScan(array: Uint32Array, output: Uint32Array) {
     output[0] = 0;
-    for (var i = 1; i < array.length; ++i) {
+    for (let i = 1; i < array.length; ++i) {
         output[i] = array[i - 1] + output[i - 1];
     }
     return output[array.length - 1] + array[array.length - 1];

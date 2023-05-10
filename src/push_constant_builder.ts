@@ -21,6 +21,9 @@ export class PushConstants {
     #maxWorkgroupsPerDimension: number;
 
     constructor(device: GPUDevice, totalWorkGroups: number, appPushConstants?: ArrayBuffer) {
+        this.#maxWorkgroupsPerDimension = device.limits.maxComputeWorkgroupsPerDimension;
+        this.totalWorkGroups = totalWorkGroups;
+
         let nDispatches =
             Math.ceil(totalWorkGroups / device.limits.maxComputeWorkgroupsPerDimension);
 

@@ -5,7 +5,7 @@ import {mat4, vec3} from "gl-matrix";
 import renderMeshShaders from "./render_mesh.wgsl";
 import {fillSelector, volumes, compileShader} from "./volume";
 import {ExclusiveScan, serialExclusiveScan} from "./exclusive_scan";
-import {StreamCompactIDs} from "./stream_compact_ids";
+import {StreamCompactIDs, serialStreamCompactIDs} from "./stream_compact_ids";
 
 (async () => {
     if (navigator.gpu === undefined) {
@@ -37,14 +37,15 @@ import {StreamCompactIDs} from "./stream_compact_ids";
     // Setup shader modules
     let shaderModule = await compileShader(device, renderMeshShaders, "renderMeshShaders");
 
-    let testPassed = true;
     for (var testRun = 0; testRun < 10; ++testRun) {
         //const maxScanTestSize = 134217728;
         const maxScanTestSize = 65536;
         let scanSize = Math.floor(Math.min(128 + Math.random() * maxScanTestSize, maxScanTestSize));
         let testScanInput = new Uint32Array(maxScanTestSize);
+        // For testing stream compact we need a random distribution of active true/false values
+        // w/ 0.5 we'll have about half elements active
         for (var i = 0; i < scanSize; ++i) {
-            testScanInput[i] = Math.random() * 4096;
+            testScanInput[i] = Math.random() > 0.5 ? 1 : 0;
         }
 
         console.log(`Scan size ${scanSize}`);
@@ -64,13 +65,13 @@ import {StreamCompactIDs} from "./stream_compact_ids";
             size: testScanInput.byteLength,
             usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
         });
-        var commandEncoder = device.createCommandEncoder();
+        let commandEncoder = device.createCommandEncoder();
         commandEncoder.copyBufferToBuffer(testScanBuf, 0, readbackBuf, 0, readbackBuf.size);
         device.queue.submit([commandEncoder.finish()]);
         await device.queue.onSubmittedWorkDone();
 
         await readbackBuf.mapAsync(GPUMapMode.READ);
-        var gpuResult = new Uint32Array(readbackBuf.getMappedRange());
+        let gpuResult = new Uint32Array(readbackBuf.getMappedRange());
 
         let validationOutput = new Uint32Array(testScanInput.length);
         let cpuSum = serialExclusiveScan(testScanInput, validationOutput);
@@ -85,18 +86,57 @@ import {StreamCompactIDs} from "./stream_compact_ids";
         }
         console.log(`Scan validation passed: ${validationPassed}`);
         if (!validationPassed) {
-            testPassed = false;
+            console.log("Scan tests failed!");
+            throw Error("Scan test failed!");
         }
 
         readbackBuf.unmap();
-    }
-    if (!testPassed) {
-        console.log("Scan tests failed!");
-        throw Error("Scan test failed!");
-    }
 
-    {
+        // Now perform a stream compaction on the buffers
         let streamCompact = await StreamCompactIDs.create(device);
+        let idOutputBufferGpu = device.createBuffer({
+            // Make sure we don't make a 0 size buffer for this test
+            size: Math.max(gpuSum * 4, 4),
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+        });
+
+        // Upload an extra copy for use as the isActiveBuffer in the stream compaction
+        let isActiveBuffer = device.createBuffer({
+            size: testScanInput.byteLength,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+            mappedAtCreation: true
+        });
+        new Uint32Array(isActiveBuffer.getMappedRange()).set(testScanInput);
+        isActiveBuffer.unmap();
+
+        await streamCompact.compactActiveIDs(isActiveBuffer, testScanBuf, idOutputBufferGpu, scanSize);
+
+        readbackBuf = device.createBuffer({
+            size: idOutputBufferGpu.size,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+        commandEncoder = device.createCommandEncoder();
+        commandEncoder.copyBufferToBuffer(idOutputBufferGpu, 0, readbackBuf, 0, readbackBuf.size);
+        device.queue.submit([commandEncoder.finish()]);
+        await device.queue.onSubmittedWorkDone();
+
+        await readbackBuf.mapAsync(GPUMapMode.READ);
+        let gpuCompactResult = new Uint32Array(readbackBuf.getMappedRange());
+
+        let idOutputBufferCpu = new Uint32Array(gpuSum);
+        serialStreamCompactIDs(testScanInput, validationOutput, idOutputBufferCpu);
+
+        let streamValidationPassed = true;
+        for (var i = 0; i < gpuSum; ++i) {
+            if (gpuCompactResult[i] != idOutputBufferCpu[i]) {
+                streamValidationPassed = false;
+            }
+        }
+        readbackBuf.unmap();
+        if (!streamValidationPassed) {
+            console.log("StreamCompactIDs failed!");
+            throw Error("StreamCompactIDs failed!");
+        }
     }
 
     // Specify vertex data
