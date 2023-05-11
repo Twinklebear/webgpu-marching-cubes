@@ -1,4 +1,4 @@
-import {alignTo} from "./volume";
+import {alignTo} from "./util";
 
 // Generate the work group ID offset buffer and the dynamic offset buffer to use for chunking
 // up a large compute dispatch. The start of the push constants data will be:
@@ -7,7 +7,8 @@ import {alignTo} from "./volume";
 //      u32: totalWorkGroups
 //      ...: optional additional data (if any)
 // }
-export class PushConstants {
+export class PushConstants
+{
     // The GPU buffer containing the push constant data, to be used
     // as a uniform buffer with a dynamic offset
     pushConstantsBuffer: GPUBuffer;
@@ -20,7 +21,8 @@ export class PushConstants {
 
     #maxWorkgroupsPerDimension: number;
 
-    constructor(device: GPUDevice, totalWorkGroups: number, appPushConstants?: ArrayBuffer) {
+    constructor(device: GPUDevice, totalWorkGroups: number, appPushConstants?: ArrayBuffer)
+    {
         this.#maxWorkgroupsPerDimension = device.limits.maxComputeWorkgroupsPerDimension;
         this.totalWorkGroups = totalWorkGroups;
 
@@ -32,7 +34,8 @@ export class PushConstants {
         this.stride = device.limits.minUniformBufferOffsetAlignment;
         let appPushConstantsView = null;
         if (appPushConstants) {
-            this.stride = alignTo(8 + appPushConstants.byteLength, device.limits.minUniformBufferOffsetAlignment);
+            this.stride = alignTo(8 + appPushConstants.byteLength,
+                device.limits.minUniformBufferOffsetAlignment);
             appPushConstantsView = new Uint8Array(appPushConstants);
         }
 
@@ -56,7 +59,8 @@ export class PushConstants {
 
             // Copy in any additional push constants data if provided
             if (appPushConstantsView) {
-                var u8view = new Uint8Array(mapping, i * this.stride + 8, appPushConstants.byteLength);
+                var u8view =
+                    new Uint8Array(mapping, i * this.stride + 8, appPushConstants.byteLength);
                 u8view.set(appPushConstantsView);
             }
         }
@@ -65,17 +69,20 @@ export class PushConstants {
 
     // Get the total number of dispatches that must be performed to run the total set
     // of workgroups, obeying the maxComputeWorkgroupsPerDimension restriction of the device.
-    numDispatches() {
+    numDispatches()
+    {
         return this.pushConstantsBuffer.size / this.stride;
     }
 
     // Get the offset to use for the pushConstants for a given dispatch index
-    pushConstantsOffset(dispatchIndex: number) {
+    pushConstantsOffset(dispatchIndex: number)
+    {
         return this.stride * dispatchIndex;
     }
 
     // Get the number of workgroups to launch for the given dispatch index
-    dispatchSize(dispatchIndex: number) {
+    dispatchSize(dispatchIndex: number)
+    {
         let remainder = this.totalWorkGroups % this.#maxWorkgroupsPerDimension;
         if (remainder == 0 || dispatchIndex + 1 < this.numDispatches()) {
             return this.#maxWorkgroupsPerDimension;

@@ -1,14 +1,14 @@
-import {alignTo, compileShader} from "./volume";
-
 import addBlockSums from "./exclusive_scan_add_block_sums.wgsl";
 import prefixSum from "./exclusive_scan_prefix_sum.wgsl";
 import prefixSumBlocks from "./exclusive_scan_prefix_sum_blocks.wgsl";
+import {alignTo, compileShader} from "./util";
 
 // Note: This also means the min size we can scan is 128 elements
 const SCAN_BLOCK_SIZE = 128;
 
 // Serial scan for validation
-export function serialExclusiveScan(array: Uint32Array, output: Uint32Array) {
+export function serialExclusiveScan(array: Uint32Array, output: Uint32Array)
+{
     output[0] = 0;
     for (let i = 1; i < array.length; ++i) {
         output[i] = array[i - 1] + output[i - 1];
@@ -16,13 +16,14 @@ export function serialExclusiveScan(array: Uint32Array, output: Uint32Array) {
     return output[array.length - 1] + array[array.length - 1];
 }
 
-export class ExclusiveScan {
+export class ExclusiveScan
+{
     #device: GPUDevice;
 
     // The max # of elements that can be scanned without carry in/out
     readonly #maxScanSize = SCAN_BLOCK_SIZE * SCAN_BLOCK_SIZE;
 
-    // Pipeline for scanning the individual blocks of ScanBlockSize elements 
+    // Pipeline for scanning the individual blocks of ScanBlockSize elements
     #scanBlocksPipeline: GPUComputePipeline;
 
     // Pipeline for scanning the block scan results which will then be added back to
@@ -33,11 +34,13 @@ export class ExclusiveScan {
     // that its scan result is globally correct based on the elements preceeding the block
     #addBlockSumsPipeline: GPUComputePipeline;
 
-    private constructor(device: GPUDevice) {
+    private constructor(device: GPUDevice)
+    {
         this.#device = device;
     }
 
-    static async create(device: GPUDevice) {
+    static async create(device: GPUDevice)
+    {
         let self = new ExclusiveScan(device);
 
         let scanAddBGLayout = device.createBindGroupLayout({
@@ -45,10 +48,7 @@ export class ExclusiveScan {
                 {
                     binding: 0,
                     visibility: GPUShaderStage.COMPUTE,
-                    buffer: {
-                        type: "storage",
-                        hasDynamicOffset: true
-                    }
+                    buffer: {type: "storage", hasDynamicOffset: true}
                 },
                 {
                     binding: 1,
@@ -86,9 +86,7 @@ export class ExclusiveScan {
             compute: {
                 module: await compileShader(device, prefixSum, "ExclusiveScan::prefixSum"),
                 entryPoint: "main",
-                constants: {
-                    "0": SCAN_BLOCK_SIZE
-                }
+                constants: {"0": SCAN_BLOCK_SIZE}
             }
         });
 
@@ -97,11 +95,10 @@ export class ExclusiveScan {
                 bindGroupLayouts: [scanBlockBGLayout],
             }),
             compute: {
-                module: await compileShader(device, prefixSumBlocks, "ExclusiveScan::prefixSumBlocks"),
+                module: await compileShader(
+                    device, prefixSumBlocks, "ExclusiveScan::prefixSumBlocks"),
                 entryPoint: "main",
-                constants: {
-                    "0": SCAN_BLOCK_SIZE
-                }
+                constants: {"0": SCAN_BLOCK_SIZE}
             }
         });
 
@@ -110,21 +107,22 @@ export class ExclusiveScan {
                 bindGroupLayouts: [scanAddBGLayout],
             }),
             compute: {
-                module: await compileShader(device, addBlockSums, "ExclusiveScan::addBlockSums"),
+                module:
+                    await compileShader(device, addBlockSums, "ExclusiveScan::addBlockSums"),
                 entryPoint: "main",
-                constants: {
-                    "0": SCAN_BLOCK_SIZE
-                }
+                constants: {"0": SCAN_BLOCK_SIZE}
             }
         });
         return self;
     }
 
-    getAlignedSize(size: number) {
+    getAlignedSize(size: number)
+    {
         return alignTo(size, SCAN_BLOCK_SIZE);
     }
 
-    async scan(buffer: GPUBuffer, size: number) {
+    async scan(buffer: GPUBuffer, size: number)
+    {
         const bufferTotalSize = buffer.size / 4;
         if (bufferTotalSize != this.getAlignedSize(bufferTotalSize)) {
             throw Error(`Error: GPU input buffer size (${bufferTotalSize}) must be aligned to ExclusiveScan::getAlignedSize, expected ${this.getAlignedSize(bufferTotalSize)}`)
@@ -195,14 +193,15 @@ export class ExclusiveScan {
         // so we don't pull down invalid values
         if (size < bufferTotalSize) {
             // TODO: Later the scan should support not reading these values by doing proper
-            // range checking so that we don't have to touch regions of the buffer you don't tell us to
+            // range checking so that we don't have to touch regions of the buffer you don't
+            // tell us to
             commandEncoder.clearBuffer(buffer, size * 4, 4);
         }
 
         // Record the scan commands
         for (var i = 0; i < numChunks; ++i) {
-            let nWorkGroups =
-                Math.min((bufferTotalSize - i * this.#maxScanSize) / SCAN_BLOCK_SIZE, SCAN_BLOCK_SIZE);
+            let nWorkGroups = Math.min(
+                (bufferTotalSize - i * this.#maxScanSize) / SCAN_BLOCK_SIZE, SCAN_BLOCK_SIZE);
 
             // Clear the previous block sums
             commandEncoder.clearBuffer(blockSumBuf);
@@ -246,4 +245,3 @@ export class ExclusiveScan {
         return sum;
     }
 };
-

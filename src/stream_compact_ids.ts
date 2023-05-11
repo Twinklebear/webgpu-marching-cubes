@@ -1,10 +1,11 @@
 import {PushConstants} from "./push_constant_builder";
-import {compileShader} from "./volume";
-
 import streamCompactIDs from "./stream_compact_ids.wgsl";
+import {compileShader} from "./util";
 
 // Serial version for validation
-export function serialStreamCompactIDs(isActiveBuffer: Uint32Array, offsetBuffer: Uint32Array, idOutputBuffer: Uint32Array) {
+export function serialStreamCompactIDs(
+    isActiveBuffer: Uint32Array, offsetBuffer: Uint32Array, idOutputBuffer: Uint32Array)
+{
     for (let i = 0; i < isActiveBuffer.length; ++i) {
         if (isActiveBuffer[i] != 0) {
             idOutputBuffer[offsetBuffer[i]] = i;
@@ -12,7 +13,8 @@ export function serialStreamCompactIDs(isActiveBuffer: Uint32Array, offsetBuffer
     }
 }
 
-export class StreamCompactIDs {
+export class StreamCompactIDs
+{
     #device: GPUDevice;
 
     // Should be at least 64 so that we process elements
@@ -24,13 +26,15 @@ export class StreamCompactIDs {
 
     #computePipeline: GPUComputePipeline;
 
-    private constructor(device: GPUDevice) {
+    private constructor(device: GPUDevice)
+    {
         this.#device = device;
 
         this.#maxDispatchSize = device.limits.maxComputeWorkgroupsPerDimension;
     }
 
-    static async create(device: GPUDevice) {
+    static async create(device: GPUDevice)
+    {
         let self = new StreamCompactIDs(device);
 
         let paramsBGLayout = device.createBindGroupLayout({
@@ -66,49 +70,43 @@ export class StreamCompactIDs {
                 {
                     binding: 0,
                     visibility: GPUShaderStage.COMPUTE,
-                    buffer: {
-                        type: "uniform",
-                        hasDynamicOffset: true
-                    }
+                    buffer: {type: "uniform", hasDynamicOffset: true}
                 },
             ]
         });
 
         self.#computePipeline = device.createComputePipeline({
-            layout: device.createPipelineLayout({
-                bindGroupLayouts: [paramsBGLayout, pushConstantsBGLayout]
-            }),
+            layout: device.createPipelineLayout(
+                {bindGroupLayouts: [paramsBGLayout, pushConstantsBGLayout]}),
             compute: {
                 module: await compileShader(device, streamCompactIDs, "StreamCompactIDs"),
                 entryPoint: "main",
-                constants: {
-                    "0": self.WORKGROUP_SIZE
-                }
+                constants: {"0": self.WORKGROUP_SIZE}
             }
         });
 
         return self;
     }
 
-    async compactActiveIDs(isActiveBuffer: GPUBuffer, offsetBuffer: GPUBuffer, idOutputBuffer: GPUBuffer,
-        size: number) {
-
+    async compactActiveIDs(isActiveBuffer: GPUBuffer,
+        offsetBuffer: GPUBuffer,
+        idOutputBuffer: GPUBuffer,
+        size: number)
+    {
         // Build the push constants
         let pushConstantsArg = new Uint32Array([size]);
-        let pushConstants = new PushConstants(this.#device, Math.ceil(size / this.WORKGROUP_SIZE),
-            pushConstantsArg.buffer);
+        let pushConstants = new PushConstants(
+            this.#device, Math.ceil(size / this.WORKGROUP_SIZE), pushConstantsArg.buffer);
 
         let pushConstantsBG = this.#device.createBindGroup({
             layout: this.#computePipeline.getBindGroupLayout(1),
-            entries: [
-                {
-                    binding: 0,
-                    resource: {
-                        buffer: pushConstants.pushConstantsBuffer,
-                        size: 12,
-                    }
+            entries: [{
+                binding: 0,
+                resource: {
+                    buffer: pushConstants.pushConstantsBuffer,
+                    size: 12,
                 }
-            ]
+            }]
         });
 
         // # of elements we can compact in a single dispatch.
@@ -116,7 +114,8 @@ export class StreamCompactIDs {
 
         // Ensure we won't break the dynamic offset alignment rules
         if (pushConstants.numDispatches() > 1 && (elementsPerDispatch * 4) % 256 != 0) {
-            throw Error("StreamCompactIDs: Buffer dynamic offsets will not be 256b aligned! Set WORKGROUP_SIZE = 64");
+            throw Error(
+                "StreamCompactIDs: Buffer dynamic offsets will not be 256b aligned! Set WORKGROUP_SIZE = 64");
         }
 
         // With dynamic offsets the size/offset validity checking means we still need to
@@ -147,7 +146,6 @@ export class StreamCompactIDs {
                 }
             ]
         });
-
 
         // Make a remainder elements bindgroup if we have some remainder to make sure
         // we don't bind out of bounds regions of the buffer. If there's no remiander we
@@ -186,7 +184,6 @@ export class StreamCompactIDs {
             });
         }
 
-
         let commandEncoder = this.#device.createCommandEncoder();
         let pass = commandEncoder.beginComputePass();
         pass.setPipeline(this.#computePipeline);
@@ -195,7 +192,9 @@ export class StreamCompactIDs {
             if (i + 1 == pushConstants.numDispatches()) {
                 dispatchParamsBG = remainderParamsBG;
             }
-            pass.setBindGroup(0, dispatchParamsBG, [i * elementsPerDispatch * 4, i * elementsPerDispatch * 4]);
+            pass.setBindGroup(0,
+                dispatchParamsBG,
+                [i * elementsPerDispatch * 4, i * elementsPerDispatch * 4]);
             pass.setBindGroup(1, pushConstantsBG, [i * pushConstants.stride]);
             pass.dispatchWorkgroups(pushConstants.dispatchSize(i), 1, 1);
         }
@@ -204,4 +203,3 @@ export class StreamCompactIDs {
         await this.#device.queue.onSubmittedWorkDone();
     }
 }
-
