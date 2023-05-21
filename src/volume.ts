@@ -128,6 +128,11 @@ export class Volume
         return this.#dimensions;
     }
 
+    get dualGridDims()
+    {
+        return [this.#dimensions[0] - 1, this.#dimensions[1] - 1, this.#dimensions[2] - 1];
+    }
+
     get voxelType()
     {
         return this.#dataType;
@@ -136,6 +141,16 @@ export class Volume
     get texture()
     {
         return this.#texture;
+    }
+
+    get numVoxels()
+    {
+        return this.#dimensions[0] * this.#dimensions[1] * this.#dimensions[2];
+    }
+
+    get dualGridNumVoxels()
+    {
+        return (this.#dimensions[0] - 1) * (this.#dimensions[1] - 1) * (this.#dimensions[2] - 1);
     }
 
     private pad(buf: Uint8Array)

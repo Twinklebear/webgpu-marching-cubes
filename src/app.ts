@@ -34,7 +34,8 @@ import {compileShader, fillSelector} from "./util";
     // Setup shader modules
     let shaderModule = await compileShader(device, renderMeshShaders, "renderMeshShaders");
 
-    //let volume = await Volume.load(volumes.get("Fuel"), device);
+    let volume = await Volume.load(volumes.get("Fuel"), device);
+    let marching_cubes = await MarchingCubes.create(volume, device);
 
     // Specify vertex data
     // Allocate room for the vertex data: 3 vertices, each with 2 float4's

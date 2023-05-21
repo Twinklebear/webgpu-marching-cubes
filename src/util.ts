@@ -15,9 +15,14 @@ export async function compileShader(device: GPUDevice, src: string, debugLabel?:
         } else {
             console.log(`Shader compilation log:`);
         }
+        let lines = src.split("\n");
         for (let i = 0; i < compilationInfo.messages.length; ++i) {
             let msg = compilationInfo.messages[i];
             console.log(`${msg.lineNum}:${msg.linePos} - ${msg.message}`);
+            // TODO: Could use length/offset here but they seem to always be 0?
+            // Same for linepos, but the error in the console has a valid linepos.
+            // it seems to be lost?
+            console.log(`    ${lines[msg.lineNum - 1]}`);
             hadError = hadError || msg.type == "error";
         }
         if (hadError) {
