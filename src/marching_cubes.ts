@@ -23,17 +23,24 @@ export class MarchingCubes
 
     #volume: Volume;
 
-    #exclusive_scan: ExclusiveScan;
+    #exclusiveScan: ExclusiveScan;
 
-    #stream_compact_ids: StreamCompactIDs;
-
-    #tri_case_table: GPUBuffer;
-
-    #volume_info: GPUBuffer;
-
-    #voxel_active: GPUBuffer;
+    #streamCompactIds: StreamCompactIDs;
 
     // Compute pipelines for each stage of the compute 
+    #markActiveVoxelPipeline: GPUComputePipeline;
+    #computeNumVertsPipeline: GPUComputePipeline;
+    #computeVerticesPipeline: GPUComputePipeline;
+
+    #triCaseTable: GPUBuffer;
+
+    #volumeInfo: GPUBuffer;
+
+    #voxelActive: GPUBuffer;
+
+    #volumeInfoBG: GPUBindGroup;
+
+    #markActiveBG: GPUBindGroup;
 
     private constructor(volume: Volume, device: GPUDevice)
     {
@@ -45,37 +52,37 @@ export class MarchingCubes
     {
         let mc = new MarchingCubes(volume, device);
 
-        mc.#exclusive_scan = await ExclusiveScan.create(device);
-        mc.#stream_compact_ids = await StreamCompactIDs.create(device);
+        mc.#exclusiveScan = await ExclusiveScan.create(device);
+        mc.#streamCompactIds = await StreamCompactIDs.create(device);
 
         // Upload the case table
         // TODO: Can optimize the size of this buffer to store each case value
         // as an int8, but since WGSL doesn't have an i8 type we then need some
         // bit unpacking in the shader to do that. Will add this after the initial
         // implementation.
-        mc.#tri_case_table = device.createBuffer({
+        mc.#triCaseTable = device.createBuffer({
             size: MC_CASE_TABLE.byteLength,
             usage: GPUBufferUsage.STORAGE,
             mappedAtCreation: true,
         });
-        new Int32Array(mc.#tri_case_table.getMappedRange()).set(MC_CASE_TABLE);
-        mc.#tri_case_table.unmap();
+        new Int32Array(mc.#triCaseTable.getMappedRange()).set(MC_CASE_TABLE);
+        mc.#triCaseTable.unmap();
 
-        mc.#volume_info = device.createBuffer({
-            size: 6 * 4,
+        mc.#volumeInfo = device.createBuffer({
+            size: 8 * 4,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
             mappedAtCreation: true
         });
-        new Uint32Array(mc.#volume_info.getMappedRange()).set(volume.dims);
-        mc.#volume_info.unmap();
+        new Uint32Array(mc.#volumeInfo.getMappedRange()).set(volume.dims);
+        mc.#volumeInfo.unmap();
 
         // Allocate the voxel active buffer. This buffer's size is fixed for
         // the entire pipeline, we need to store a flag for each voxel if it's
         // active or not. We'll run a scan on this buffer so it also needs to be
         // aligned to the scan size.
-        mc.#voxel_active = device.createBuffer({
-            size: mc.#exclusive_scan.getAlignedSize(volume.dualGridNumVoxels) * 4,
-            usage: GPUBufferUsage.STORAGE,
+        mc.#voxelActive = device.createBuffer({
+            size: mc.#exclusiveScan.getAlignedSize(volume.dualGridNumVoxels) * 4,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
         });
 
         // Compile shaders for our compute kernels
@@ -86,6 +93,178 @@ export class MarchingCubes
         let computeVertices = await compileShader(device,
             computeVoxelValuesWgsl + "\n" + computeVerticesWgsl, "compute_vertices.wgsl");
 
+        // Bind group layout for the volume parameters, shared by all pipelines in group 0
+        let volumeInfoBGLayout = device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.COMPUTE,
+                    texture: {
+                        viewDimension: "3d",
+                    }
+                },
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "uniform"
+                    }
+                }
+            ]
+        });
+
+        mc.#volumeInfoBG = device.createBindGroup({
+            layout: volumeInfoBGLayout,
+            entries: [
+                {
+                    binding: 0,
+                    resource: mc.#volume.texture.createView(),
+                },
+                {
+                    binding: 1,
+                    resource: {
+                        buffer: mc.#volumeInfo,
+                    }
+                }
+            ]
+        });
+
+        let markActiveVoxelBGLayout = device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "storage",
+                    }
+                }
+            ]
+        });
+
+        mc.#markActiveBG = device.createBindGroup({
+            layout: markActiveVoxelBGLayout,
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: mc.#voxelActive,
+                    }
+                }
+            ]
+        });
+
+        let computeNumVertsBGLayout = device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "read-only-storage",
+                    }
+                },
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "storage",
+                    }
+                },
+                {
+                    binding: 2,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "storage",
+                    }
+                }
+            ]
+        });
+
+        let computeVerticesBGLayout = device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "read-only-storage",
+                    }
+                },
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "storage",
+                    }
+                },
+                {
+                    binding: 2,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "storage",
+                    }
+                },
+                {
+                    binding: 3,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "storage",
+                    }
+                }
+            ]
+        });
+
+        // Push constants BG layout
+        let pushConstantsBGLayout = device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.COMPUTE,
+                    buffer: {
+                        type: "uniform",
+                        hasDynamicOffset: true
+                    }
+                }
+            ]
+        });
+
+        // Create pipelines
+        mc.#markActiveVoxelPipeline = device.createComputePipeline({
+            layout: device.createPipelineLayout(
+                {bindGroupLayouts: [volumeInfoBGLayout, markActiveVoxelBGLayout]}),
+            compute: {
+                module: markActiveVoxel,
+                entryPoint: "main"
+            }
+        });
+
+
+        mc.#computeNumVertsPipeline = device.createComputePipeline({
+            layout: device.createPipelineLayout({
+                bindGroupLayouts: [
+                    volumeInfoBGLayout,
+                    computeNumVertsBGLayout,
+                    pushConstantsBGLayout
+                ]
+            }),
+            compute: {
+                module: computeNumVerts,
+                entryPoint: "main"
+            }
+        });
+
+        mc.#computeVerticesPipeline = device.createComputePipeline({
+            layout: device.createPipelineLayout({
+                bindGroupLayouts: [
+                    volumeInfoBGLayout,
+                    computeVerticesBGLayout,
+                    pushConstantsBGLayout
+                ]
+            }),
+            compute: {
+                module: computeVertices,
+                entryPoint: "main"
+            }
+        });
+
         return mc;
     }
 
@@ -94,6 +273,8 @@ export class MarchingCubes
     async computeSurface(isovalue: number)
     {
         this.uploadIsovalue(isovalue);
+
+        await this.computeActiveVoxels();
 
 
         return [0, null];
@@ -110,12 +291,51 @@ export class MarchingCubes
         uploadIsovalue.unmap();
 
         var commandEncoder = this.#device.createCommandEncoder();
-        commandEncoder.copyBufferToBuffer(uploadIsovalue, 0, this.#volume_info, 16, 4);
+        commandEncoder.copyBufferToBuffer(uploadIsovalue, 0, this.#volumeInfo, 16, 4);
         this.#device.queue.submit([commandEncoder.finish()]);
     }
 
     private async computeActiveVoxels()
     {
+        let dispatchSize = [
+            Math.ceil(this.#volume.dualGridDims[0] / 4),
+            Math.ceil(this.#volume.dualGridDims[1] / 4),
+            Math.ceil(this.#volume.dualGridDims[2] / 2)
+        ];
+
+        // Readback info about active voxels for validation
+        let debugBuf = this.#device.createBuffer({
+            size: this.#volume.dualGridNumVoxels * 4,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        });
+
+        var commandEncoder = this.#device.createCommandEncoder();
+        var pass = commandEncoder.beginComputePass();
+
+        pass.setPipeline(this.#markActiveVoxelPipeline);
+        pass.setBindGroup(0, this.#volumeInfoBG);
+        pass.setBindGroup(1, this.#markActiveBG);
+        pass.dispatchWorkgroups(dispatchSize[0], dispatchSize[1], dispatchSize[2]);
+
+        pass.end();
+
+        // Readback info about active voxels for validation
+        commandEncoder.copyBufferToBuffer(this.#voxelActive, 0, debugBuf, 0, debugBuf.size);
+
+        this.#device.queue.submit([commandEncoder.finish()]);
+        await this.#device.queue.onSubmittedWorkDone();
+
+        await debugBuf.mapAsync(GPUMapMode.READ);
+        let activeVoxels = new Uint32Array(debugBuf.getMappedRange());
+        let nActive = 0;
+        for (let i = 0; i < activeVoxels.length; ++i) {
+            if (activeVoxels[i]) {
+                ++nActive;
+            }
+        }
+        console.log(`# of active voxels = ${nActive} of ${this.#volume.dualGridNumVoxels}`);
+
+        debugBuf.unmap();
     }
 
     private async computeVertexOffsets()

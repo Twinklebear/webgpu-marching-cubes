@@ -52,6 +52,7 @@ export function voxelTypeToTextureType(ty: VoxelType)
 {
     switch (ty) {
         case VoxelType.UINT8:
+            // TODO: should use the non-normalized types later
             return "r8unorm";
         case VoxelType.UINT16:
             return "r16uint";

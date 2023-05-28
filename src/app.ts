@@ -36,6 +36,7 @@ import {compileShader, fillSelector} from "./util";
 
     let volume = await Volume.load(volumes.get("Fuel"), device);
     let marching_cubes = await MarchingCubes.create(volume, device);
+    await marching_cubes.computeSurface(0.25);
 
     // Specify vertex data
     // Allocate room for the vertex data: 3 vertices, each with 2 float4's
