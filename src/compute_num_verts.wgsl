@@ -1,5 +1,7 @@
 // include of compute_voxel_values.wgsl is inserted here
 
+@id(0) override WORKGROUP_SIZE: u32 = 32;
+
 @group(1) @binding(0)
 var<storage> case_table: array<i32>;
 
@@ -18,11 +20,11 @@ struct PushConstants {
 @group(2) @binding(0)
 var<uniform> push_constants: PushConstants;
 
-@compute @workgroup_size(32)
+@compute @workgroup_size(WORKGROUP_SIZE)
 fn main(@builtin(global_invocation_id) global_id: uint3)
 {
     // Skip out of bounds threads
-    let work_item = global_id.x + push_constants.group_id_offset;
+    let work_item = global_id.x + push_constants.group_id_offset * WORKGROUP_SIZE;
     if (work_item >= push_constants.total_elements) {
         return;
     }

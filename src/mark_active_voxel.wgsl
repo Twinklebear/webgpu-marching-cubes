@@ -24,6 +24,6 @@ fn main(@builtin(global_invocation_id) global_id: uint3)
     }
     let voxel_idx = global_id.x +
         (volume_info.dims.x - 1) * (global_id.y + (volume_info.dims.z - 1) * global_id.z);
-    voxel_active[voxel_idx] = select(1u, 0u, case_index != 0 && case_index != MC_NUM_CASES - 1);
+    voxel_active[voxel_idx] = select(0u, 1u, case_index != 0 && case_index != MC_NUM_CASES - 1);
 }
 
