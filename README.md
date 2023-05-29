@@ -1,6 +1,6 @@
 # WebGPU Marching Cubes
 
-A GPU-parallel implementation of [Marching Cubes](https://en.wikipedia.org/wiki/Marching_cubes) using WebGPU.
+A GPU-parallel implementation of [Marching Cubes](https://en.wikipedia.org/wiki/Marching_cubes) using WebGPU. Try it out [online](https://www.willusher.io/webgpu-marching-cubes/)!
 
 ## Running
 
