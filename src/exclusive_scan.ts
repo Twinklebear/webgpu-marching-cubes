@@ -172,7 +172,26 @@ export class ExclusiveScan
                     binding: 0,
                     resource: {
                         buffer: buffer,
-                        size: Math.min(this.#maxScanSize, bufferTotalSize) * 4,
+                        size: this.#maxScanSize * 4,
+                    }
+                },
+                {
+                    binding: 1,
+                    resource: {
+                        buffer: blockSumBuf,
+                    },
+                },
+            ],
+        });
+
+        let scanRemainderBlocksBG = this.#device.createBindGroup({
+            layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: buffer,
+                        size: (bufferTotalSize % this.#maxScanSize) * 4,
                     }
                 },
                 {
@@ -200,6 +219,8 @@ export class ExclusiveScan
 
         // Record the scan commands
         for (var i = 0; i < numChunks; ++i) {
+            let currentScanBlocksBG = i + 1 < numChunks ? scanBlocksBG : scanRemainderBlocksBG;
+
             let nWorkGroups = Math.min(
                 (bufferTotalSize - i * this.#maxScanSize) / SCAN_BLOCK_SIZE, SCAN_BLOCK_SIZE);
 
@@ -209,7 +230,7 @@ export class ExclusiveScan
             var computePass = commandEncoder.beginComputePass();
 
             computePass.setPipeline(this.#scanBlocksPipeline);
-            computePass.setBindGroup(0, scanBlocksBG, [i * this.#maxScanSize * 4]);
+            computePass.setBindGroup(0, currentScanBlocksBG, [i * this.#maxScanSize * 4]);
             computePass.dispatchWorkgroups(nWorkGroups, 1, 1);
 
             computePass.setPipeline(this.#scanBlockResultsPipeline);
@@ -217,7 +238,7 @@ export class ExclusiveScan
             computePass.dispatchWorkgroups(1, 1, 1);
 
             computePass.setPipeline(this.#addBlockSumsPipeline);
-            computePass.setBindGroup(0, scanBlocksBG, [i * this.#maxScanSize * 4]);
+            computePass.setBindGroup(0, currentScanBlocksBG, [i * this.#maxScanSize * 4]);
             computePass.dispatchWorkgroups(nWorkGroups, 1, 1);
 
             computePass.end();

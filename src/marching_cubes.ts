@@ -274,7 +274,7 @@ export class MarchingCubes
     {
         this.uploadIsovalue(isovalue);
 
-        await this.computeActiveVoxels();
+        let activeVoxels = await this.computeActiveVoxels();
 
 
         return [0, null];
@@ -303,10 +303,9 @@ export class MarchingCubes
             Math.ceil(this.#volume.dualGridDims[2] / 2)
         ];
 
-        // Readback info about active voxels for validation
-        let debugBuf = this.#device.createBuffer({
-            size: this.#volume.dualGridNumVoxels * 4,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        let activeVoxelOffsets = this.#device.createBuffer({
+            size: this.#voxelActive.size,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | GPUBufferUsage.STORAGE
         });
 
         var commandEncoder = this.#device.createCommandEncoder();
@@ -319,23 +318,87 @@ export class MarchingCubes
 
         pass.end();
 
-        // Readback info about active voxels for validation
-        commandEncoder.copyBufferToBuffer(this.#voxelActive, 0, debugBuf, 0, debugBuf.size);
+        // Copy the active voxel info to the offsets buffer that we're going to scan,
+        // since scan happens in place
+        commandEncoder.copyBufferToBuffer(this.#voxelActive, 0, activeVoxelOffsets, 0, activeVoxelOffsets.size);
 
         this.#device.queue.submit([commandEncoder.finish()]);
         await this.#device.queue.onSubmittedWorkDone();
 
-        await debugBuf.mapAsync(GPUMapMode.READ);
-        let activeVoxels = new Uint32Array(debugBuf.getMappedRange());
-        let nActive = 0;
-        for (let i = 0; i < activeVoxels.length; ++i) {
-            if (activeVoxels[i]) {
-                ++nActive;
-            }
-        }
-        console.log(`# of active voxels = ${nActive} of ${this.#volume.dualGridNumVoxels}`);
+        // Scan the active voxel offsets buffer and compact the IDs down
+        let nActive = await this.#exclusiveScan.scan(activeVoxelOffsets, this.#volume.dualGridNumVoxels);
 
-        debugBuf.unmap();
+        let activeVoxelIDs = this.#device.createBuffer({
+            size: nActive * 4,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+        });
+
+        await this.#streamCompactIds.compactActiveIDs(this.#voxelActive,
+            activeVoxelOffsets,
+            activeVoxelIDs,
+            this.#volume.dualGridNumVoxels);
+
+        console.log(`GPU # voxels active = ${nActive}`);
+
+        {
+            // Readback info about active voxels for validation
+            let debugActive = this.#device.createBuffer({
+                size: this.#volume.dualGridNumVoxels * 4,
+                usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+            });
+            let debugOffset = this.#device.createBuffer({
+                size: this.#volume.dualGridNumVoxels * 4,
+                usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+            });
+
+            var commandEncoder = this.#device.createCommandEncoder();
+            // Readback info about active voxels for validation
+            commandEncoder.copyBufferToBuffer(this.#voxelActive, 0, debugActive, 0, debugActive.size);
+            commandEncoder.copyBufferToBuffer(activeVoxelOffsets, 0, debugOffset, 0, debugOffset.size);
+
+            this.#device.queue.submit([commandEncoder.finish()]);
+            await this.#device.queue.onSubmittedWorkDone();
+
+            await debugActive.mapAsync(GPUMapMode.READ);
+            await debugOffset.mapAsync(GPUMapMode.READ);
+
+            let activeVoxels = new Uint32Array(debugActive.getMappedRange());
+            let offsets = new Uint32Array(debugOffset.getMappedRange());
+
+            let nActive = 0;
+            for (let i = 0; i < activeVoxels.length; ++i) {
+                if (activeVoxels[i]) {
+                    //console.log(`Active Voxel[${i}] offset = ${offsets[i]}`);
+                    ++nActive;
+                }
+            }
+            console.log(`debug # of active voxels = ${nActive} of ${this.#volume.dualGridNumVoxels}`);
+
+            debugActive.unmap();
+            debugOffset.unmap();
+        }
+
+        {
+            // Readback info about active voxels for validation
+            let debugBuf = this.#device.createBuffer({
+                size: nActive * 4,
+                usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+            });
+
+            var commandEncoder = this.#device.createCommandEncoder();
+            // Readback info about active voxels for validation
+            commandEncoder.copyBufferToBuffer(activeVoxelIDs, 0, debugBuf, 0, activeVoxelIDs.size);
+            this.#device.queue.submit([commandEncoder.finish()]);
+            await this.#device.queue.onSubmittedWorkDone();
+
+            await debugBuf.mapAsync(GPUMapMode.READ);
+            let activeVoxels = new Uint32Array(debugBuf.getMappedRange());
+            console.log(`active voxel IDs`);
+            console.log(activeVoxels);
+            debugBuf.unmap();
+        }
+
+        return {nActive: nActive, activeVoxelIDs: activeVoxelIDs};
     }
 
     private async computeVertexOffsets()
