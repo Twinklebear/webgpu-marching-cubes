@@ -189,6 +189,9 @@ import {compileShader, fillSelector} from "./util";
             continue;
         }
 
+        let sliderValue = parseFloat(isovalueSlider.value) / 255.0;
+        let recomputeSurface = sliderValue != currentIsovalue;
+
         // When a new volume is selected, recompute the surface and reposition the camera
         if (volumePicker.value != currentVolume) {
             if (isosurface.buffer) {
@@ -199,14 +202,15 @@ import {compileShader, fillSelector} from "./util";
 
             volume = await Volume.load(volumes.get(currentVolume), device);
             marching_cubes = await MarchingCubes.create(volume, device);
-            isosurface = await marching_cubes.computeSurface(0.5);
+            isovalueSlider.value = "128";
+            sliderValue = parseFloat(isovalueSlider.value) / 255.0;
+            recomputeSurface = true;
 
             const defaultEye = vec3.set(vec3.create(), 0.0, 0.0, volume.dims[2] * 0.75);
             camera = new ArcballCamera(defaultEye, center, up, 2, [canvas.width, canvas.height]);
         }
 
-        let sliderValue = parseFloat(isovalueSlider.value) / 255.0;
-        if (sliderValue != currentIsovalue) {
+        if (recomputeSurface) {
             if (isosurface.buffer) {
                 isosurface.buffer.destroy();
             }
