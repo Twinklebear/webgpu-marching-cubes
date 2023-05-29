@@ -105,7 +105,7 @@ import {compileShader, fillSelector} from "./util";
     };
 
     let viewParamsBuffer = device.createBuffer({
-        size: 4 * 4 * 4,
+        size: (4 * 4 + 4) * 4,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         mappedAtCreation: false,
     });
@@ -122,8 +122,8 @@ import {compileShader, fillSelector} from "./util";
     });
 
     // Setup camera and camera controls
-    const defaultEye = vec3.set(vec3.create(), 32.0, 32.0, 72.0);
-    const center = vec3.set(vec3.create(), 32.0, 32.0, 0.5);
+    const defaultEye = vec3.set(vec3.create(), 0.0, 0.0, volume.dims[2] * 0.75);
+    const center = vec3.set(vec3.create(), 0.0, 0.0, 0.5);
     const up = vec3.set(vec3.create(), 0.0, 1.0, 0.0);
     let camera = new ArcballCamera(defaultEye, center, up, 2, [canvas.width, canvas.height]);
     let proj = mat4.perspective(
@@ -171,7 +171,9 @@ import {compileShader, fillSelector} from "./util";
         projView = mat4.mul(projView, proj, camera.camera);
         {
             await uploadBuffer.mapAsync(GPUMapMode.WRITE);
-            new Float32Array(uploadBuffer.getMappedRange()).set(projView);
+            let map = uploadBuffer.getMappedRange();
+            new Float32Array(map).set(projView);
+            new Uint32Array(map, 16 * 4, 4).set(volume.dims);
             uploadBuffer.unmap();
         }
 
