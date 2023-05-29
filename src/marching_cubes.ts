@@ -355,66 +355,6 @@ export class MarchingCubes
             activeVoxelIDs,
             this.#volume.dualGridNumVoxels);
 
-        console.log(`GPU # voxels active = ${nActive}`);
-
-        {
-            // Readback info about active voxels for validation
-            let debugActive = this.#device.createBuffer({
-                size: this.#volume.dualGridNumVoxels * 4,
-                usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-            });
-            let debugOffset = this.#device.createBuffer({
-                size: this.#volume.dualGridNumVoxels * 4,
-                usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-            });
-
-            var commandEncoder = this.#device.createCommandEncoder();
-            // Readback info about active voxels for validation
-            commandEncoder.copyBufferToBuffer(this.#voxelActive, 0, debugActive, 0, debugActive.size);
-            commandEncoder.copyBufferToBuffer(activeVoxelOffsets, 0, debugOffset, 0, debugOffset.size);
-
-            this.#device.queue.submit([commandEncoder.finish()]);
-            await this.#device.queue.onSubmittedWorkDone();
-
-            await debugActive.mapAsync(GPUMapMode.READ);
-            await debugOffset.mapAsync(GPUMapMode.READ);
-
-            let activeVoxels = new Uint32Array(debugActive.getMappedRange());
-            let offsets = new Uint32Array(debugOffset.getMappedRange());
-
-            let nActive = 0;
-            for (let i = 0; i < activeVoxels.length; ++i) {
-                if (activeVoxels[i]) {
-                    //console.log(`Active Voxel[${i}] offset = ${offsets[i]}`);
-                    ++nActive;
-                }
-            }
-            console.log(`debug # of active voxels = ${nActive} of ${this.#volume.dualGridNumVoxels}`);
-
-            debugActive.unmap();
-            debugOffset.unmap();
-        }
-
-        {
-            // Readback info about active voxels for validation
-            let debugBuf = this.#device.createBuffer({
-                size: nActive * 4,
-                usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-            });
-
-            var commandEncoder = this.#device.createCommandEncoder();
-            // Readback info about active voxels for validation
-            commandEncoder.copyBufferToBuffer(activeVoxelIDs, 0, debugBuf, 0, activeVoxelIDs.size);
-            this.#device.queue.submit([commandEncoder.finish()]);
-            await this.#device.queue.onSubmittedWorkDone();
-
-            await debugBuf.mapAsync(GPUMapMode.READ);
-            let activeVoxels = new Uint32Array(debugBuf.getMappedRange());
-            console.log(`active voxel IDs`);
-            console.log(activeVoxels);
-            debugBuf.unmap();
-        }
-
         return new MarchingCubesResult(nActive, activeVoxelIDs);
     }
 
@@ -479,7 +419,6 @@ export class MarchingCubes
         await this.#device.queue.onSubmittedWorkDone();
 
         let nVertices = await this.#exclusiveScan.scan(vertexOffsets, activeVoxels.count);
-        console.log(`# of vertices = ${nVertices}`);
 
         return new MarchingCubesResult(nVertices, vertexOffsets);
     }
