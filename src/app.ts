@@ -42,7 +42,13 @@ import {compileShader, fillSelector} from "./util";
     // Setup shader modules
     let shaderModule = await compileShader(device, renderMeshShaders, "renderMeshShaders");
 
-    // TODO: link from history state to allow linking to a volume
+    if (window.location.hash) {
+        let linkedDataset = decodeURI(window.location.hash.substring(1));
+        if (volumes.has(linkedDataset)) {
+            volumePicker.value = linkedDataset;
+        }
+    }
+
     let currentVolume = volumePicker.value;
     let volume = await Volume.load(volumes.get(currentVolume), device);
     let marching_cubes = await MarchingCubes.create(volume, device);
@@ -188,8 +194,9 @@ import {compileShader, fillSelector} from "./util";
             if (isosurface.buffer) {
                 isosurface.buffer.destroy();
             }
-
             currentVolume = volumePicker.value;
+            history.replaceState(history.state, "#" + currentVolume, "#" + currentVolume);
+
             volume = await Volume.load(volumes.get(currentVolume), device);
             marching_cubes = await MarchingCubes.create(volume, device);
             isosurface = await marching_cubes.computeSurface(0.5);
