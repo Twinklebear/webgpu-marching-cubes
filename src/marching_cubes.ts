@@ -298,6 +298,8 @@ export class MarchingCubes
         }
 
         let vertices = await this.computeVertices(activeVoxels, vertexOffsets);
+        activeVoxels.buffer.destroy();
+        vertexOffsets.buffer.destroy();
 
         return new MarchingCubesResult(vertexOffsets.count, vertices);
     }
@@ -363,6 +365,8 @@ export class MarchingCubes
             activeVoxelOffsets,
             activeVoxelIDs,
             this.#volume.dualGridNumVoxels);
+
+        activeVoxelOffsets.destroy();
 
         return new MarchingCubesResult(nActive, activeVoxelIDs);
     }

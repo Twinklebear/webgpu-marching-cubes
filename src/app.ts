@@ -185,6 +185,10 @@ import {compileShader, fillSelector} from "./util";
 
         // When a new volume is selected, recompute the surface and reposition the camera
         if (volumePicker.value != currentVolume) {
+            if (isosurface.buffer) {
+                isosurface.buffer.destroy();
+            }
+
             currentVolume = volumePicker.value;
             volume = await Volume.load(volumes.get(currentVolume), device);
             marching_cubes = await MarchingCubes.create(volume, device);
@@ -196,6 +200,10 @@ import {compileShader, fillSelector} from "./util";
 
         let sliderValue = parseFloat(isovalueSlider.value) / 255.0;
         if (sliderValue != currentIsovalue) {
+            if (isosurface.buffer) {
+                isosurface.buffer.destroy();
+            }
+
             currentIsovalue = sliderValue;
             let start = performance.now();
             isosurface = await marching_cubes.computeSurface(currentIsovalue);

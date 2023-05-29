@@ -189,24 +189,28 @@ export class ExclusiveScan
                 ],
             });
 
-            scanRemainderBlocksBG = this.#device.createBindGroup({
-                layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
-                entries: [
-                    {
-                        binding: 0,
-                        resource: {
-                            buffer: buffer,
-                            size: (bufferTotalSize % this.#maxScanSize) * 4,
-                        }
-                    },
-                    {
-                        binding: 1,
-                        resource: {
-                            buffer: blockSumBuf,
+            if (bufferTotalSize % this.#maxScanSize != 0) {
+                scanRemainderBlocksBG = this.#device.createBindGroup({
+                    layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
+                    entries: [
+                        {
+                            binding: 0,
+                            resource: {
+                                buffer: buffer,
+                                size: (bufferTotalSize % this.#maxScanSize) * 4,
+                            }
                         },
-                    },
-                ],
-            });
+                        {
+                            binding: 1,
+                            resource: {
+                                buffer: blockSumBuf,
+                            },
+                        },
+                    ],
+                });
+            } else {
+                scanRemainderBlocksBG = scanBlocksBG;
+            }
         } else {
             scanBlocksBG = this.#device.createBindGroup({
                 layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
