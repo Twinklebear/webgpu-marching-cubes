@@ -165,45 +165,69 @@ export class ExclusiveScan
             ],
         });
 
-        let scanBlocksBG = this.#device.createBindGroup({
-            layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
-            entries: [
-                {
-                    binding: 0,
-                    resource: {
-                        buffer: buffer,
-                        size: this.#maxScanSize * 4,
-                    }
-                },
-                {
-                    binding: 1,
-                    resource: {
-                        buffer: blockSumBuf,
-                    },
-                },
-            ],
-        });
-
-        let scanRemainderBlocksBG = this.#device.createBindGroup({
-            layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
-            entries: [
-                {
-                    binding: 0,
-                    resource: {
-                        buffer: buffer,
-                        size: (bufferTotalSize % this.#maxScanSize) * 4,
-                    }
-                },
-                {
-                    binding: 1,
-                    resource: {
-                        buffer: blockSumBuf,
-                    },
-                },
-            ],
-        });
-
         const numChunks = Math.ceil(size / this.#maxScanSize);
+
+        let scanBlocksBG = null;
+        let scanRemainderBlocksBG = null;
+        if (numChunks > 1) {
+            scanBlocksBG = this.#device.createBindGroup({
+                layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
+                entries: [
+                    {
+                        binding: 0,
+                        resource: {
+                            buffer: buffer,
+                            size: this.#maxScanSize * 4,
+                        }
+                    },
+                    {
+                        binding: 1,
+                        resource: {
+                            buffer: blockSumBuf,
+                        },
+                    },
+                ],
+            });
+
+            scanRemainderBlocksBG = this.#device.createBindGroup({
+                layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
+                entries: [
+                    {
+                        binding: 0,
+                        resource: {
+                            buffer: buffer,
+                            size: (bufferTotalSize % this.#maxScanSize) * 4,
+                        }
+                    },
+                    {
+                        binding: 1,
+                        resource: {
+                            buffer: blockSumBuf,
+                        },
+                    },
+                ],
+            });
+        } else {
+            scanBlocksBG = this.#device.createBindGroup({
+                layout: this.#scanBlocksPipeline.getBindGroupLayout(0),
+                entries: [
+                    {
+                        binding: 0,
+                        resource: {
+                            buffer: buffer,
+                            size: Math.min(this.#maxScanSize, bufferTotalSize) * 4,
+                        }
+                    },
+                    {
+                        binding: 1,
+                        resource: {
+                            buffer: blockSumBuf,
+                        },
+                    },
+                ],
+            });
+            scanRemainderBlocksBG = scanBlocksBG;
+        }
 
         var commandEncoder = this.#device.createCommandEncoder();
         commandEncoder.clearBuffer(blockSumBuf);
@@ -219,7 +243,10 @@ export class ExclusiveScan
 
         // Record the scan commands
         for (var i = 0; i < numChunks; ++i) {
-            let currentScanBlocksBG = i + 1 < numChunks ? scanBlocksBG : scanRemainderBlocksBG;
+            let currentScanBlocksBG = scanBlocksBG;
+            if (i + 1 == numChunks) {
+                currentScanBlocksBG = scanRemainderBlocksBG;
+            }
 
             let nWorkGroups = Math.min(
                 (bufferTotalSize - i * this.#maxScanSize) / SCAN_BLOCK_SIZE, SCAN_BLOCK_SIZE);

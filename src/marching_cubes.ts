@@ -8,6 +8,19 @@ import computeVoxelValuesWgsl from "./compute_voxel_values.wgsl";
 import markActiveVoxelsWgsl from "./mark_active_voxel.wgsl";
 import computeNumVertsWgsl from "./compute_num_verts.wgsl";
 import computeVerticesWgsl from "./compute_vertices.wgsl";
+import {PushConstants} from "./push_constant_builder";
+
+export class MarchingCubesResult
+{
+    count: number;
+    buffer: GPUBuffer;
+
+    constructor(count: number, buffer: GPUBuffer)
+    {
+        this.count = count;
+        this.buffer = buffer;
+    }
+};
 
 /* Marching Cubes execution has 5 steps
  * 1. Compute active voxels
@@ -276,8 +289,11 @@ export class MarchingCubes
 
         let activeVoxels = await this.computeActiveVoxels();
 
+        let vertexOffsets = await this.computeVertexOffsets(activeVoxels);
 
-        return [0, null];
+        let vertices = await this.computeVertices(activeVoxels, vertexOffsets);
+
+        return new MarchingCubesResult(vertexOffsets.count, vertices);
     }
 
     private uploadIsovalue(isovalue: number)
@@ -325,7 +341,7 @@ export class MarchingCubes
         this.#device.queue.submit([commandEncoder.finish()]);
         await this.#device.queue.onSubmittedWorkDone();
 
-        // Scan the active voxel offsets buffer and compact the IDs down
+        // Scan the active voxel buffer to get offsets to output the active voxel IDs too
         let nActive = await this.#exclusiveScan.scan(activeVoxelOffsets, this.#volume.dualGridNumVoxels);
 
         let activeVoxelIDs = this.#device.createBuffer({
@@ -333,6 +349,7 @@ export class MarchingCubes
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
         });
 
+        // Output the compact buffer of active voxel IDs
         await this.#streamCompactIds.compactActiveIDs(this.#voxelActive,
             activeVoxelOffsets,
             activeVoxelIDs,
@@ -398,14 +415,83 @@ export class MarchingCubes
             debugBuf.unmap();
         }
 
-        return {nActive: nActive, activeVoxelIDs: activeVoxelIDs};
+        return new MarchingCubesResult(nActive, activeVoxelIDs);
     }
 
-    private async computeVertexOffsets()
+    private async computeVertexOffsets(activeVoxels: MarchingCubesResult)
     {
+        let vertexOffsets = this.#device.createBuffer({
+            size: this.#exclusiveScan.getAlignedSize(activeVoxels.count) * 4,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+        });
+
+        let bindGroup = this.#device.createBindGroup({
+            layout: this.#computeNumVertsPipeline.getBindGroupLayout(1),
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: this.#triCaseTable
+                    }
+                },
+                {
+                    binding: 1,
+                    resource: {
+                        buffer: activeVoxels.buffer,
+                    }
+                },
+                {
+                    binding: 2,
+                    resource: {
+                        buffer: vertexOffsets
+                    }
+                }
+            ]
+        });
+
+        let pushConstantsArg = new Uint32Array([activeVoxels.count]);
+        let pushConstants = new PushConstants(
+            this.#device, Math.ceil(activeVoxels.count / 32), pushConstantsArg.buffer);
+
+        let pushConstantsBG = this.#device.createBindGroup({
+            layout: this.#computeNumVertsPipeline.getBindGroupLayout(2),
+            entries: [{
+                binding: 0,
+                resource: {
+                    buffer: pushConstants.pushConstantsBuffer,
+                    size: 12,
+                }
+            }]
+        });
+
+        let commandEncoder = this.#device.createCommandEncoder();
+
+        let pass = commandEncoder.beginComputePass();
+        pass.setPipeline(this.#computeNumVertsPipeline);
+        pass.setBindGroup(0, this.#volumeInfoBG);
+        pass.setBindGroup(1, bindGroup);
+        for (let i = 0; i < pushConstants.numDispatches(); ++i) {
+            pass.setBindGroup(2, pushConstantsBG, [i * pushConstants.stride]);
+            pass.dispatchWorkgroups(pushConstants.dispatchSize(i), 1, 1);
+        }
+        pass.end();
+        this.#device.queue.submit([commandEncoder.finish()]);
+        await this.#device.queue.onSubmittedWorkDone();
+
+        let nVertices = await this.#exclusiveScan.scan(vertexOffsets, activeVoxels.count);
+        console.log(`# of vertices = ${nVertices}`);
+
+        return new MarchingCubesResult(nVertices, vertexOffsets);
     }
 
-    private async computeVertices()
+    private async computeVertices(activeVoxels: MarchingCubesResult, vertexOffsets: MarchingCubesResult)
     {
+        // We'll output a vec3 per vertex
+        let vertices = this.#device.createBuffer({
+            size: vertexOffsets.count * 3 * 4,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX
+        });
+
+        return vertices;
     }
 };
