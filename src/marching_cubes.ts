@@ -288,8 +288,14 @@ export class MarchingCubes
         this.uploadIsovalue(isovalue);
 
         let activeVoxels = await this.computeActiveVoxels();
+        if (activeVoxels.count == 0) {
+            return new MarchingCubesResult(0, null);
+        }
 
         let vertexOffsets = await this.computeVertexOffsets(activeVoxels);
+        if (vertexOffsets.count == 0) {
+            return new MarchingCubesResult(0, null);
+        }
 
         let vertices = await this.computeVertices(activeVoxels, vertexOffsets);
 
@@ -343,6 +349,9 @@ export class MarchingCubes
 
         // Scan the active voxel buffer to get offsets to output the active voxel IDs too
         let nActive = await this.#exclusiveScan.scan(activeVoxelOffsets, this.#volume.dualGridNumVoxels);
+        if (nActive == 0) {
+            return new MarchingCubesResult(0, null);
+        }
 
         let activeVoxelIDs = this.#device.createBuffer({
             size: nActive * 4,

@@ -19,7 +19,10 @@ import {compileShader, fillSelector} from "./util";
     let adapter = await navigator.gpu.requestAdapter();
     console.log(adapter.limits);
     let requestedLimits = {
-        requiredLimits: {maxBufferSize: adapter.limits.maxBufferSize},
+        requiredLimits: {
+            maxBufferSize: adapter.limits.maxBufferSize,
+            maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+        },
     };
 
     let device = await adapter.requestDevice(requestedLimits);
@@ -31,12 +34,24 @@ import {compileShader, fillSelector} from "./util";
     let volumePicker = document.getElementById("volumeList") as HTMLSelectElement;
     fillSelector(volumePicker, volumes);
 
+    let isovalueSlider = document.getElementById("isovalueSlider") as HTMLInputElement;
+    let currentIsovalue = parseFloat(isovalueSlider.value);
+
+    let perfDisplay = document.getElementById("stats") as HTMLElement;
+
     // Setup shader modules
     let shaderModule = await compileShader(device, renderMeshShaders, "renderMeshShaders");
 
-    let volume = await Volume.load(volumes.get("Fuel"), device);
+    // TODO: link from history state to allow linking to a volume
+    let currentVolume = volumePicker.value;
+    let volume = await Volume.load(volumes.get(currentVolume), device);
     let marching_cubes = await MarchingCubes.create(volume, device);
-    let isosurface = await marching_cubes.computeSurface(0.5);
+    let start = performance.now();
+    let isosurface = await marching_cubes.computeSurface(currentIsovalue / 255.0);
+    let end = performance.now();
+
+    perfDisplay.innerHTML =
+        `<p>Compute Time: ${(end - start).toFixed((2))}ms<br/># Vertices: ${isosurface.count}</p>`
 
     // Vertex attribute state and shader stage
     let vertexState = {
@@ -168,6 +183,28 @@ import {compileShader, fillSelector} from "./util";
             continue;
         }
 
+        // When a new volume is selected, recompute the surface and reposition the camera
+        if (volumePicker.value != currentVolume) {
+            currentVolume = volumePicker.value;
+            volume = await Volume.load(volumes.get(currentVolume), device);
+            marching_cubes = await MarchingCubes.create(volume, device);
+            isosurface = await marching_cubes.computeSurface(0.5);
+
+            const defaultEye = vec3.set(vec3.create(), 0.0, 0.0, volume.dims[2] * 0.75);
+            camera = new ArcballCamera(defaultEye, center, up, 2, [canvas.width, canvas.height]);
+        }
+
+        let sliderValue = parseFloat(isovalueSlider.value) / 255.0;
+        if (sliderValue != currentIsovalue) {
+            currentIsovalue = sliderValue;
+            let start = performance.now();
+            isosurface = await marching_cubes.computeSurface(currentIsovalue);
+            let end = performance.now();
+
+            perfDisplay.innerHTML =
+                `<p>Compute Time: ${(end - start).toFixed((2))}ms<br/># Vertices: ${isosurface.count}</p>`
+        }
+
         projView = mat4.mul(projView, proj, camera.camera);
         {
             await uploadBuffer.mapAsync(GPUMapMode.WRITE);
@@ -186,10 +223,12 @@ import {compileShader, fillSelector} from "./util";
 
         let renderPass = commandEncoder.beginRenderPass(renderPassDesc);
 
-        renderPass.setBindGroup(0, bindGroup);
-        renderPass.setPipeline(renderPipeline);
-        renderPass.setVertexBuffer(0, isosurface.buffer);
-        renderPass.draw(isosurface.count, 1, 0, 0);
+        if (isosurface.count > 0) {
+            renderPass.setBindGroup(0, bindGroup);
+            renderPass.setPipeline(renderPipeline);
+            renderPass.setVertexBuffer(0, isosurface.buffer);
+            renderPass.draw(isosurface.count, 1, 0, 0);
+        }
 
         renderPass.end();
         device.queue.submit([commandEncoder.finish()]);
