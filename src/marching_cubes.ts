@@ -486,11 +486,70 @@ export class MarchingCubes
 
     private async computeVertices(activeVoxels: MarchingCubesResult, vertexOffsets: MarchingCubesResult)
     {
-        // We'll output a vec3 per vertex
+        // We'll output a float4 per vertex
         let vertices = this.#device.createBuffer({
-            size: vertexOffsets.count * 3 * 4,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX
+            size: vertexOffsets.count * 4 * 4,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_SRC
         });
+
+        let bindGroup = this.#device.createBindGroup({
+            layout: this.#computeVerticesPipeline.getBindGroupLayout(1),
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: this.#triCaseTable
+                    }
+                },
+                {
+                    binding: 1,
+                    resource: {
+                        buffer: activeVoxels.buffer,
+                    }
+                },
+                {
+                    binding: 2,
+                    resource: {
+                        buffer: vertexOffsets.buffer
+                    }
+                },
+                {
+                    binding: 3,
+                    resource: {
+                        buffer: vertices
+                    }
+                }
+            ]
+        });
+
+        let pushConstantsArg = new Uint32Array([activeVoxels.count]);
+        let pushConstants = new PushConstants(
+            this.#device, Math.ceil(activeVoxels.count / 32), pushConstantsArg.buffer);
+
+        let pushConstantsBG = this.#device.createBindGroup({
+            layout: this.#computeNumVertsPipeline.getBindGroupLayout(2),
+            entries: [{
+                binding: 0,
+                resource: {
+                    buffer: pushConstants.pushConstantsBuffer,
+                    size: 12,
+                }
+            }]
+        });
+
+        let commandEncoder = this.#device.createCommandEncoder();
+
+        let pass = commandEncoder.beginComputePass();
+        pass.setPipeline(this.#computeVerticesPipeline);
+        pass.setBindGroup(0, this.#volumeInfoBG);
+        pass.setBindGroup(1, bindGroup);
+        for (let i = 0; i < pushConstants.numDispatches(); ++i) {
+            pass.setBindGroup(2, pushConstantsBG, [i * pushConstants.stride]);
+            pass.dispatchWorkgroups(pushConstants.dispatchSize(i), 1, 1);
+        }
+        pass.end();
+        this.#device.queue.submit([commandEncoder.finish()]);
+        await this.#device.queue.onSubmittedWorkDone();
 
         return vertices;
     }

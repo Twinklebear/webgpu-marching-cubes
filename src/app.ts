@@ -36,23 +36,7 @@ import {compileShader, fillSelector} from "./util";
 
     let volume = await Volume.load(volumes.get("Fuel"), device);
     let marching_cubes = await MarchingCubes.create(volume, device);
-    await marching_cubes.computeSurface(0.25);
-
-    // Specify vertex data
-    // Allocate room for the vertex data: 3 vertices, each with 2 float4's
-    let dataBuf = device.createBuffer(
-        {size: 3 * 2 * 4 * 4, usage: GPUBufferUsage.VERTEX, mappedAtCreation: true});
-
-    // Interleaved positions and colors
-    new Float32Array(dataBuf.getMappedRange()).set([
-        1, -1, 0, 1,  // position
-        1, 0, 0, 1,  // color
-        -1, -1, 0, 1,  // position
-        0, 1, 0, 1,  // color
-        0, 1, 0, 1,  // position
-        0, 0, 1, 1,  // color
-    ]);
-    dataBuf.unmap();
+    let isosurface = await marching_cubes.computeSurface(0.5);
 
     // Vertex attribute state and shader stage
     let vertexState = {
@@ -61,10 +45,9 @@ import {compileShader, fillSelector} from "./util";
         entryPoint: "vertex_main",
         // Vertex buffer info
         buffers: [{
-            arrayStride: 2 * 4 * 4,
+            arrayStride: 4 * 4,
             attributes: [
-                {format: "float32x4" as GPUVertexFormat, offset: 0, shaderLocation: 0},
-                {format: "float32x4" as GPUVertexFormat, offset: 4 * 4, shaderLocation: 1}
+                {format: "float32x4" as GPUVertexFormat, offset: 0, shaderLocation: 0}
             ]
         }]
     };
@@ -139,12 +122,12 @@ import {compileShader, fillSelector} from "./util";
     });
 
     // Setup camera and camera controls
-    const defaultEye = vec3.set(vec3.create(), 0.0, 0.0, 2.5);
-    const center = vec3.set(vec3.create(), 0.0, 0.0, 0.5);
+    const defaultEye = vec3.set(vec3.create(), 32.0, 32.0, 72.0);
+    const center = vec3.set(vec3.create(), 32.0, 32.0, 0.5);
     const up = vec3.set(vec3.create(), 0.0, 1.0, 0.0);
     let camera = new ArcballCamera(defaultEye, center, up, 2, [canvas.width, canvas.height]);
     let proj = mat4.perspective(
-        mat4.create(), 50 * Math.PI / 180.0, canvas.width / canvas.height, 0.1, 100);
+        mat4.create(), 50 * Math.PI / 180.0, canvas.width / canvas.height, 0.1, 1000);
     let projView = mat4.create();
 
     // Register mouse and touch listeners
@@ -203,8 +186,8 @@ import {compileShader, fillSelector} from "./util";
 
         renderPass.setBindGroup(0, bindGroup);
         renderPass.setPipeline(renderPipeline);
-        renderPass.setVertexBuffer(0, dataBuf);
-        renderPass.draw(3, 1, 0, 0);
+        renderPass.setVertexBuffer(0, isosurface.buffer);
+        renderPass.draw(isosurface.count, 1, 0, 0);
 
         renderPass.end();
         device.queue.submit([commandEncoder.finish()]);
