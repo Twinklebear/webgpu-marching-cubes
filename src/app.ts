@@ -57,7 +57,7 @@ import {compileShader, fillSelector} from "./util";
     let end = performance.now();
 
     perfDisplay.innerHTML =
-        `<p>Compute Time: ${(end - start).toFixed((2))}ms<br/># Vertices: ${isosurface.count}</p>`
+        `<p>Compute Time: ${(end - start).toFixed((2))}ms<br/># Triangles: ${isosurface.count / 3}</p>`
 
     // Vertex attribute state and shader stage
     let vertexState = {
@@ -221,7 +221,7 @@ import {compileShader, fillSelector} from "./util";
             let end = performance.now();
 
             perfDisplay.innerHTML =
-                `<p>Compute Time: ${(end - start).toFixed((2))}ms<br/># Vertices: ${isosurface.count}</p>`
+                `<p>Compute Time: ${(end - start).toFixed((2))}ms<br/># Triangles: ${isosurface.count / 3}</p>`
         }
 
         projView = mat4.mul(projView, proj, camera.camera);
