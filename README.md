@@ -16,3 +16,5 @@ To install webpack, then you can run the serve task and point your browser to `l
 npm run serve
 ```
 
+If you select the Bonsai data set, you should see something like the image below.
+![webgpu-marching-cubes-bonsai](https://github.com/Twinklebear/webgpu-marching-cubes/assets/1522476/f3106ab0-6967-4540-8f2c-ebadcc94fe9f)
