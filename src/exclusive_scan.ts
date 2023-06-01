@@ -4,7 +4,7 @@ import prefixSumBlocks from "./exclusive_scan_prefix_sum_blocks.wgsl";
 import {alignTo, compileShader} from "./util";
 
 // Note: This also means the min size we can scan is 128 elements
-const SCAN_BLOCK_SIZE = 128;
+const SCAN_BLOCK_SIZE = 512;
 
 // Serial scan for validation
 export function serialExclusiveScan(array: Uint32Array, output: Uint32Array)
@@ -233,7 +233,7 @@ export class ExclusiveScan
             scanRemainderBlocksBG = scanBlocksBG;
         }
 
-        var commandEncoder = this.#device.createCommandEncoder();
+        let commandEncoder = this.#device.createCommandEncoder();
         commandEncoder.clearBuffer(blockSumBuf);
         commandEncoder.clearBuffer(carryBuf);
         // If the size being scanned is less than the buffer size, clear the end of it
@@ -246,7 +246,7 @@ export class ExclusiveScan
         }
 
         // Record the scan commands
-        for (var i = 0; i < numChunks; ++i) {
+        for (let i = 0; i < numChunks; ++i) {
             let currentScanBlocksBG = scanBlocksBG;
             if (i + 1 == numChunks) {
                 currentScanBlocksBG = scanRemainderBlocksBG;
@@ -258,7 +258,7 @@ export class ExclusiveScan
             // Clear the previous block sums
             commandEncoder.clearBuffer(blockSumBuf);
 
-            var computePass = commandEncoder.beginComputePass();
+            let computePass = commandEncoder.beginComputePass();
 
             computePass.setPipeline(this.#scanBlocksPipeline);
             computePass.setBindGroup(0, currentScanBlocksBG, [i * this.#maxScanSize * 4]);
@@ -290,8 +290,8 @@ export class ExclusiveScan
         await this.#device.queue.onSubmittedWorkDone();
 
         await readbackBuf.mapAsync(GPUMapMode.READ);
-        var mapping = new Uint32Array(readbackBuf.getMappedRange());
-        var sum = mapping[0];
+        let mapping = new Uint32Array(readbackBuf.getMappedRange());
+        let sum = mapping[0];
         readbackBuf.unmap();
 
         return sum;

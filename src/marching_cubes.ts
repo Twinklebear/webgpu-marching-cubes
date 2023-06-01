@@ -55,10 +55,30 @@ export class MarchingCubes
 
     #markActiveBG: GPUBindGroup;
 
+    // Timestamp queries and query output buffer
+    #timestampQuerySupport: boolean;
+    #timestampQuerySet: GPUQuerySet;
+    #timestampBuffer: GPUBuffer;
+    #timestampReadbackBuffer: GPUBuffer;
+
+    // Performance stats
+    computeActiveVoxelsTime = 0;
+    markActiveVoxelsKernelTime = -1;
+    computeActiveVoxelsScanTime = 0;
+    computeActiveVoxelsCompactTime = 0;
+
+    computeVertexOffsetsTime = 0;
+    computeNumVertsKernelTime = -1;
+    computeVertexOffsetsScanTime = 0;
+
+    computeVerticesTime = 0;
+    computeVerticesKernelTime = -1;
+
     private constructor(volume: Volume, device: GPUDevice)
     {
         this.#device = device;
         this.#volume = volume;
+        this.#timestampQuerySupport = device.features.has("timestamp-query");
     }
 
     static async create(volume: Volume, device: GPUDevice)
@@ -278,6 +298,22 @@ export class MarchingCubes
             }
         });
 
+        if (mc.#timestampQuerySupport) {
+            // We store 6 timestamps, for the start/end of each compute pass we run
+            mc.#timestampQuerySet = device.createQuerySet({
+                type: "timestamp",
+                count: 6
+            });
+            mc.#timestampBuffer = device.createBuffer({
+                size: 6 * 8,
+                usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC
+            });
+            mc.#timestampReadbackBuffer = device.createBuffer({
+                size: mc.#timestampBuffer.size,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+        }
+
         return mc;
     }
 
@@ -287,19 +323,41 @@ export class MarchingCubes
     {
         this.uploadIsovalue(isovalue);
 
+        let start = performance.now();
         let activeVoxels = await this.computeActiveVoxels();
+        let end = performance.now();
+        this.computeActiveVoxelsTime = end - start;
         if (activeVoxels.count == 0) {
             return new MarchingCubesResult(0, null);
         }
 
+        start = performance.now();
         let vertexOffsets = await this.computeVertexOffsets(activeVoxels);
+        end = performance.now();
+        this.computeVertexOffsetsTime = end - start;
         if (vertexOffsets.count == 0) {
             return new MarchingCubesResult(0, null);
         }
 
+        start = performance.now();
         let vertices = await this.computeVertices(activeVoxels, vertexOffsets);
+        end = performance.now();
+        this.computeVerticesTime = end - start;
         activeVoxels.buffer.destroy();
         vertexOffsets.buffer.destroy();
+
+        // Map back the timestamps and get performance statistics
+        if (this.#timestampQuerySupport) {
+            await this.#timestampReadbackBuffer.mapAsync(GPUMapMode.READ);
+            let times = new BigUint64Array(this.#timestampReadbackBuffer.getMappedRange());
+
+            // Timestamps are in nanoseconds
+            this.markActiveVoxelsKernelTime = Number(times[1] - times[0]) * 1.0e-6;
+            this.computeNumVertsKernelTime = Number(times[3] - times[2]) * 1.0e-6;
+            this.computeVerticesKernelTime = Number(times[5] - times[4]) * 1.0e-6;
+
+            this.#timestampReadbackBuffer.unmap();
+        }
 
         return new MarchingCubesResult(vertexOffsets.count, vertices);
     }
@@ -333,6 +391,10 @@ export class MarchingCubes
         });
 
         var commandEncoder = this.#device.createCommandEncoder();
+
+        if (this.#timestampQuerySupport) {
+            commandEncoder.writeTimestamp(this.#timestampQuerySet, 0);
+        }
         var pass = commandEncoder.beginComputePass();
 
         pass.setPipeline(this.#markActiveVoxelPipeline);
@@ -341,6 +403,9 @@ export class MarchingCubes
         pass.dispatchWorkgroups(dispatchSize[0], dispatchSize[1], dispatchSize[2]);
 
         pass.end();
+        if (this.#timestampQuerySupport) {
+            commandEncoder.writeTimestamp(this.#timestampQuerySet, 1);
+        }
 
         // Copy the active voxel info to the offsets buffer that we're going to scan,
         // since scan happens in place
@@ -349,8 +414,11 @@ export class MarchingCubes
         this.#device.queue.submit([commandEncoder.finish()]);
         await this.#device.queue.onSubmittedWorkDone();
 
+        let start = performance.now();
         // Scan the active voxel buffer to get offsets to output the active voxel IDs too
         let nActive = await this.#exclusiveScan.scan(activeVoxelOffsets, this.#volume.dualGridNumVoxels);
+        let end = performance.now();
+        this.computeActiveVoxelsScanTime = end - start;
         if (nActive == 0) {
             return new MarchingCubesResult(0, null);
         }
@@ -360,11 +428,14 @@ export class MarchingCubes
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
         });
 
+        start = performance.now();
         // Output the compact buffer of active voxel IDs
         await this.#streamCompactIds.compactActiveIDs(this.#voxelActive,
             activeVoxelOffsets,
             activeVoxelIDs,
             this.#volume.dualGridNumVoxels);
+        end = performance.now();
+        this.computeActiveVoxelsCompactTime = end - start;
 
         activeVoxelOffsets.destroy();
 
@@ -418,6 +489,9 @@ export class MarchingCubes
         });
 
         let commandEncoder = this.#device.createCommandEncoder();
+        if (this.#timestampQuerySupport) {
+            commandEncoder.writeTimestamp(this.#timestampQuerySet, 2);
+        }
 
         let pass = commandEncoder.beginComputePass();
         pass.setPipeline(this.#computeNumVertsPipeline);
@@ -428,10 +502,16 @@ export class MarchingCubes
             pass.dispatchWorkgroups(pushConstants.dispatchSize(i), 1, 1);
         }
         pass.end();
+        if (this.#timestampQuerySupport) {
+            commandEncoder.writeTimestamp(this.#timestampQuerySet, 3);
+        }
         this.#device.queue.submit([commandEncoder.finish()]);
         await this.#device.queue.onSubmittedWorkDone();
 
+        let start = performance.now();
         let nVertices = await this.#exclusiveScan.scan(vertexOffsets, activeVoxels.count);
+        let end = performance.now();
+        this.computeVertexOffsetsScanTime = end - start;
 
         return new MarchingCubesResult(nVertices, vertexOffsets);
     }
@@ -490,6 +570,9 @@ export class MarchingCubes
         });
 
         let commandEncoder = this.#device.createCommandEncoder();
+        if (this.#timestampQuerySupport) {
+            commandEncoder.writeTimestamp(this.#timestampQuerySet, 4);
+        }
 
         let pass = commandEncoder.beginComputePass();
         pass.setPipeline(this.#computeVerticesPipeline);
@@ -500,6 +583,20 @@ export class MarchingCubes
             pass.dispatchWorkgroups(pushConstants.dispatchSize(i), 1, 1);
         }
         pass.end();
+
+        if (this.#timestampQuerySupport) {
+            commandEncoder.writeTimestamp(this.#timestampQuerySet, 5);
+
+            // This is our last compute pass to compute the surface, so resolve the
+            // timestamp queries now as well
+            commandEncoder.resolveQuerySet(this.#timestampQuerySet, 0, 6, this.#timestampBuffer, 0);
+            commandEncoder.copyBufferToBuffer(this.#timestampBuffer,
+                0,
+                this.#timestampReadbackBuffer,
+                0,
+                this.#timestampBuffer.size);
+        }
+
         this.#device.queue.submit([commandEncoder.finish()]);
         await this.#device.queue.onSubmittedWorkDone();
 

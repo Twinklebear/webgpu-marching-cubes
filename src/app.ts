@@ -18,14 +18,24 @@ import {compileShader, fillSelector} from "./util";
     // Get a GPU device to render with
     let adapter = await navigator.gpu.requestAdapter();
     console.log(adapter.limits);
-    let requestedLimits = {
+
+    let deviceRequiredFeatures: GPUFeatureName[] = [];
+    const timestampSupport = adapter.features.has("timestamp-query");
+    // Enable timestamp queries if the device supports them
+    if (timestampSupport) {
+        deviceRequiredFeatures.push("timestamp-query");
+    } else {
+        console.log("Device does not support timestamp queries");
+    }
+    let deviceDescriptor = {
+        requiredFeatures: deviceRequiredFeatures,
         requiredLimits: {
             maxBufferSize: adapter.limits.maxBufferSize,
             maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
-        },
+        }
     };
 
-    let device = await adapter.requestDevice(requestedLimits);
+    let device = await adapter.requestDevice(deviceDescriptor);
 
     // Get a context to display our rendered image on the canvas
     let canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
@@ -35,9 +45,11 @@ import {compileShader, fillSelector} from "./util";
     fillSelector(volumePicker, volumes);
 
     let isovalueSlider = document.getElementById("isovalueSlider") as HTMLInputElement;
-    let currentIsovalue = parseFloat(isovalueSlider.value);
+    // Force computing the surface on the initial load
+    let currentIsovalue = -1;
 
     let perfDisplay = document.getElementById("stats") as HTMLElement;
+    let timestampDisplay = document.getElementById("timestamp-stats") as HTMLElement;
 
     // Setup shader modules
     let shaderModule = await compileShader(device, renderMeshShaders, "renderMeshShaders");
@@ -51,13 +63,8 @@ import {compileShader, fillSelector} from "./util";
 
     let currentVolume = volumePicker.value;
     let volume = await Volume.load(volumes.get(currentVolume), device);
-    let marching_cubes = await MarchingCubes.create(volume, device);
-    let start = performance.now();
-    let isosurface = await marching_cubes.computeSurface(currentIsovalue / 255.0);
-    let end = performance.now();
-
-    perfDisplay.innerHTML =
-        `<p>Compute Time: ${(end - start).toFixed((2))}ms<br/># Triangles: ${isosurface.count / 3}</p>`
+    let mc = await MarchingCubes.create(volume, device);
+    let isosurface = null;
 
     // Vertex attribute state and shader stage
     let vertexState = {
@@ -201,7 +208,7 @@ import {compileShader, fillSelector} from "./util";
             history.replaceState(history.state, "#" + currentVolume, "#" + currentVolume);
 
             volume = await Volume.load(volumes.get(currentVolume), device);
-            marching_cubes = await MarchingCubes.create(volume, device);
+            mc = await MarchingCubes.create(volume, device);
             isovalueSlider.value = "128";
             sliderValue = parseFloat(isovalueSlider.value) / 255.0;
             recomputeSurface = true;
@@ -211,17 +218,51 @@ import {compileShader, fillSelector} from "./util";
         }
 
         if (recomputeSurface) {
-            if (isosurface.buffer) {
+            if (isosurface && isosurface.buffer) {
                 isosurface.buffer.destroy();
             }
 
             currentIsovalue = sliderValue;
             let start = performance.now();
-            isosurface = await marching_cubes.computeSurface(currentIsovalue);
+            isosurface = await mc.computeSurface(currentIsovalue);
             let end = performance.now();
 
             perfDisplay.innerHTML =
                 `<p>Compute Time: ${(end - start).toFixed((2))}ms<br/># Triangles: ${isosurface.count / 3}</p>`
+
+            timestampDisplay.innerHTML =
+                `<h4>Timing Breakdown</h4>
+                    <p>Note: if timestamp-query is not supported, -1 is shown for kernel times</p>
+
+                    Compute Active Voxels: ${mc.computeActiveVoxelsTime.toFixed(2)}ms
+                    <ul>
+                    <li>
+                    Mark Active Voxels Kernel: ${mc.markActiveVoxelsKernelTime.toFixed(2)}ms
+                    </li>
+                    <li>
+                    Exclusive Scan: ${mc.computeActiveVoxelsScanTime.toFixed(2)}ms
+                    </li>
+                    <li>
+                    Stream Compact: ${mc.computeActiveVoxelsCompactTime.toFixed(2)}ms
+                    </li>
+                    </ul>
+
+                    Compute Vertex Offsets: ${mc.computeVertexOffsetsTime.toFixed(2)}ms
+                    <ul>
+                    <li>
+                    Compute # of Vertices Kernel: ${mc.computeNumVertsKernelTime.toFixed(2)}ms
+                    </li>
+                    <li>
+                    Exclusive Scan: ${mc.computeVertexOffsetsScanTime.toFixed(2)}ms
+                    </li>
+                    </ul>
+
+                    Compute Vertices: ${mc.computeVerticesTime.toFixed(2)}ms
+                    <ul>
+                    <li>
+                    Compute Vertices Kernel: ${mc.computeVerticesKernelTime.toFixed(2)}ms
+                    </li>
+                    </ul>`;
         }
 
         projView = mat4.mul(projView, proj, camera.camera);
