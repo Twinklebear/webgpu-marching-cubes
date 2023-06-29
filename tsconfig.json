@@ -6,6 +6,7 @@
         "target": "ESNext",
         "allowJs": true,
         "moduleResolution": "Bundler",
+        "skipLibCheck": true,
         "sourceMap": true,
         "types": [ "@webgpu/types"]
     }
