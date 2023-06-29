@@ -31,6 +31,7 @@
     "@webgpu/types": "^0.1.30",
     "arcball_camera": "^1.0.1",
     "ez_canvas_controller": "^1.0.0",
-    "gl-matrix": "^3.4.1"
+    "gl-matrix": "^3.4.1",
+    "stoneberry": "^0.1.12"
   }
 }

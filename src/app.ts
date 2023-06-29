@@ -1,3 +1,5 @@
+import {PrefixScan} from "stoneberry";
+
 import {ArcballCamera} from "arcball_camera";
 import {Controller} from "ez_canvas_controller";
 import {mat4, vec3} from "gl-matrix";
@@ -36,6 +38,27 @@ import {compileShader, fillSelector} from "./util";
     };
 
     let device = await adapter.requestDevice(deviceDescriptor);
+
+    {
+        let testBuf = device.createBuffer({
+            size: 128 * 4,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_DST,
+            mappedAtCreation: true
+        });
+        let data = new Uint32Array(testBuf.getMappedRange());
+        for (let i = 0; i < data.length; ++i) {
+            data[i] = 1;
+        }
+        testBuf.unmap();
+
+        let scan = new PrefixScan({device, src: testBuf});
+        let commandEncoder = device.createCommandEncoder();
+        scan.commands(commandEncoder);
+        device.queue.submit([commandEncoder.finish()]);
+        await device.queue.onSubmittedWorkDone();
+
+        console.log(`scan result = ${scan.result}`);
+    }
 
     // Get a context to display our rendered image on the canvas
     let canvas = document.getElementById("webgpu-canvas") as HTMLCanvasElement;
