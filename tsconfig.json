@@ -5,7 +5,7 @@
         "module": "ESNext",
         "target": "ESNext",
         "allowJs": true,
-        "moduleResolution": "Node",
+        "moduleResolution": "Bundler",
         "sourceMap": true,
         "typeRoots": [ "./node_modules/@webgpu/types", "./node_modules/@types"]
     }
