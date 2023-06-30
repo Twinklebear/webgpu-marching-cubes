@@ -1,4 +1,4 @@
-import {PrefixScan} from "stoneberry";
+import {PrefixScan} from "stoneberry/scan";
 
 import {ArcballCamera} from "arcball_camera";
 import {Controller} from "ez_canvas_controller";

@@ -2,12 +2,13 @@
     "compilerOptions": {
         "outDir": "./dist/",
         "noImplicitAny": true,
-        "module": "ES6",
-        "target": "ES6",
+        "module": "ESNext",
+        "target": "ESNext",
         "allowJs": true,
-        "moduleResolution": "Node",
+        "moduleResolution": "Bundler",
+        "skipLibCheck": true,
         "sourceMap": true,
-        "typeRoots": [ "./node_modules/@webgpu/types", "./node_modules/@types"]
+        "types": [ "@webgpu/types"]
     }
 }
 
