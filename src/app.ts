@@ -42,7 +42,7 @@ import {compileShader, fillSelector} from "./util";
     {
         let testBuf = device.createBuffer({
             size: 128 * 4,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_DST,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | GPUBufferUsage.STORAGE,
             mappedAtCreation: true
         });
         let data = new Uint32Array(testBuf.getMappedRange());
@@ -52,12 +52,19 @@ import {compileShader, fillSelector} from "./util";
         testBuf.unmap();
 
         let scan = new PrefixScan({device, src: testBuf});
+        /*
         let commandEncoder = device.createCommandEncoder();
         scan.commands(commandEncoder);
         device.queue.submit([commandEncoder.finish()]);
         await device.queue.onSubmittedWorkDone();
 
         console.log(`scan result = ${scan.result}`);
+        */
+        // TODO: for use in marching cubes, stoneberry's scan is inclusive
+        // I need exclusive. So can either copy & shift the values, or add an
+        // exclusive scan
+        let result = await scan.scan();
+        console.log(`result = ${result}`);
     }
 
     // Get a context to display our rendered image on the canvas
