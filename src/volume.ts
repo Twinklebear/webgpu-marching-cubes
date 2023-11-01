@@ -129,6 +129,12 @@ export class Volume
         return this.#dimensions;
     }
 
+    get diagonalLength()
+    {
+        return Math.sqrt(Math.pow(this.#dimensions[0], 2.0) + Math.pow(this.#dimensions[1], 2.0)
+            + Math.pow(this.#dimensions[2], 2.0));
+    }
+
     get dualGridDims()
     {
         return [this.#dimensions[0] - 1, this.#dimensions[1] - 1, this.#dimensions[2] - 1];

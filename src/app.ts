@@ -153,7 +153,8 @@ import {compileShader, fillSelector} from "./util";
     const defaultEye = vec3.set(vec3.create(), 0.0, 0.0, volume.dims[2] * 0.75);
     const center = vec3.set(vec3.create(), 0.0, 0.0, 0.5);
     const up = vec3.set(vec3.create(), 0.0, 1.0, 0.0);
-    let camera = new ArcballCamera(defaultEye, center, up, 2, [canvas.width, canvas.height]);
+    let camera = new ArcballCamera(defaultEye, center, up, volume.diagonalLength * 0.1,
+        [canvas.width, canvas.height]);
     let proj = mat4.perspective(
         mat4.create(), 50 * Math.PI / 180.0, canvas.width / canvas.height, 0.1, 1000);
     let projView = mat4.create();
@@ -214,7 +215,8 @@ import {compileShader, fillSelector} from "./util";
             recomputeSurface = true;
 
             const defaultEye = vec3.set(vec3.create(), 0.0, 0.0, volume.dims[2] * 0.75);
-            camera = new ArcballCamera(defaultEye, center, up, 2, [canvas.width, canvas.height]);
+            camera = new ArcballCamera(defaultEye, center, up, volume.diagonalLength * 0.1,
+                [canvas.width, canvas.height]);
         }
 
         if (recomputeSurface) {
